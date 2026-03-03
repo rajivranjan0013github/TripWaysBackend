@@ -2,6 +2,7 @@ import { Router } from "express";
 import { OAuth2Client } from "google-auth-library";
 import jwt from "jsonwebtoken";
 import jwksClient from "jwks-rsa";
+import User from "../models/User.js";
 
 const router = Router();
 
@@ -34,7 +35,6 @@ function getAppleSigningKey(header, callback) {
 router.post("/google/loginSignUp", async (req, res) => {
     try {
         const { token, platform } = req.body;
-        console.log(token, platform)
 
         if (!token) {
             return res.status(400).json({ error: "Token is required" });
@@ -51,14 +51,31 @@ router.post("/google/loginSignUp", async (req, res) => {
         });
 
         const payload = ticket.getPayload();
-        console.log(payload)
 
-        res.json({
-            success: true,
-            user: {
+        // Check if user exists
+        let user = await User.findOne({ email: payload.email });
+        let isNewUser = false;
+
+        if (!user) {
+            // Create new user if doesn't exist
+            isNewUser = true;
+            user = await User.create({
                 email: payload.email,
                 name: payload.name,
                 picture: payload.picture,
+                authProvider: "google",
+                platform: platform === "android" ? "android" : "ios",
+            });
+        }
+
+        res.json({
+            success: true,
+            isNewUser,
+            user: {
+                id: user._id,
+                email: user.email,
+                name: user.name,
+                picture: user.picture,
             },
         });
     } catch (error) {
@@ -104,12 +121,28 @@ router.post("/apple/loginSignUp", async (req, res) => {
             });
         }
 
-        res.json({
-            success: true,
-            user: {
+        // Check if user exists
+        let user = await User.findOne({ email });
+        let isNewUser = false;
+
+        if (!user) {
+            // Create new user if doesn't exist
+            isNewUser = true;
+            user = await User.create({
                 email,
                 name: displayName || "Apple User",
-                appleUserId: decodedToken.sub,
+                authProvider: "apple",
+                platform: "ios",
+            });
+        }
+
+        res.json({
+            success: true,
+            isNewUser,
+            user: {
+                id: user._id,
+                email: user.email,
+                name: user.name,
             },
         });
     } catch (error) {
@@ -122,3 +155,4 @@ router.post("/apple/loginSignUp", async (req, res) => {
 });
 
 export default router;
+

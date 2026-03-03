@@ -1,4 +1,5 @@
 import config from "../config/apiConfig.js";
+import { uploadPlacePhotos } from "./r2Service.js";
 
 const TEXT_SEARCH_URL =
     "https://maps.googleapis.com/maps/api/place/textsearch/json";
@@ -145,5 +146,9 @@ export async function discoverPlaces(destination, interests, days = 3) {
     }
 
     console.log(`✅ Discovered ${allPlaces.length} unique places across ${interests.length} interest(s)`);
+
+    // Upload place photos to Cloudflare R2 for permanent storage
+    await uploadPlacePhotos(allPlaces);
+
     return allPlaces;
 }
