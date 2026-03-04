@@ -1,7 +1,7 @@
-import { generateDayWisePlan, generatePlanFromVideo } from "../services/geminiService.js";
+import { generateDayWisePlan, extractPlacesFromVideoAI } from "../services/geminiService.js";
 import { geocodeItinerary } from "../services/geocodingService.js";
 import { getRoutesForItinerary } from "../services/routingService.js";
-import { discoverPlaces as discoverPlacesService } from "../services/placesService.js";
+import { discoverPlaces as discoverPlacesService, lookupPlacesByLocations } from "../services/placesService.js";
 
 /**
  * Main trip planning controller.
@@ -157,10 +157,10 @@ export async function planTripStream(req, res) {
 }
 
 /**
- * Main trip planning controller for streaming (Server-Sent Events) from a Video URL.
- * Streams: AI Plan → Geocoded Plan → Routed Plan
+ * Extract places from a Video URL and look them up via Places API.
+ * Streams progress via SSE, then returns discovered places (same shape as /api/discover-places).
  */
-export async function planTripStreamFromVideo(req, res) {
+export async function extractVideoPlaces(req, res) {
     const startTime = Date.now();
 
     // Setup SSE headers
@@ -176,66 +176,51 @@ export async function planTripStreamFromVideo(req, res) {
 
     try {
         // ── Step 1: Validate Input ──────────────────────────────
-        const { videoUrl, days } = req.body;
+        const { videoUrl } = req.body;
 
         if (!videoUrl || typeof videoUrl !== "string" || !videoUrl.startsWith("http")) {
             sendEvent("error", { message: "Missing or invalid 'videoUrl'. Provide a valid URL." });
             return res.end();
         }
 
-        if (!days || typeof days !== "number" || days < 1 || days > 14) {
-            sendEvent("error", { message: "Missing or invalid 'days'. Provide a number between 1 and 14." });
-            return res.end();
-        }
-
         console.log(`\n${"═".repeat(50)}`);
-        console.log(`🎬 Streaming trip pattern from VIDEO URL for ${days} day(s)`);
+        console.log(`🎬 Extracting places from VIDEO URL`);
         console.log(`🔗 URL: ${videoUrl}`);
         console.log(`${"═".repeat(50)}\n`);
 
-        // ── Step 2: Generate Day-Wise Plan via Gemini analysis ──
-        // Pass a callback to stream detailed download/upload steps back to UI
-        const plan = await generatePlanFromVideo(videoUrl.trim(), days, (statusMessage) => {
+        // ── Step 2: Extract place names from video via Gemini ──
+        const aiResult = await extractPlacesFromVideoAI(videoUrl.trim(), (statusMessage) => {
             sendEvent("progress", { message: statusMessage });
         });
 
-        // ** STREAM EVENT 1: Basic Itinerary (Text only, feeling of speed!)
-        sendEvent("itinerary", {
-            destination: plan.destination,
-            totalDays: plan.totalDays,
-            itinerary: plan.itinerary,
-            videoTranscript: plan.videoTranscript,
-            aiUnderstanding: plan.aiUnderstanding,
-            fromVideo: true
-        });
+        sendEvent("progress", { message: `Extracted places from ${aiResult.locations.length} location(s). Looking up details...` });
 
-        // ── Step 3: Geocode All Places ──────────────────────────
-        const geocodedPlan = await geocodeItinerary(plan);
-
-        // ** STREAM EVENT 2: Geocoded Itinerary (Map pins appear!)
-        sendEvent("geocoded", {
-            itinerary: geocodedPlan.itinerary
-        });
-
-        // ── Step 4: Get Routes for Each Day ─────────────────────
-        const routedPlan = await getRoutesForItinerary(geocodedPlan);
+        // ── Step 3: Look up each place via Google Places API (per-city) ──
+        const places = await lookupPlacesByLocations(aiResult.locations);
 
         const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.log(`\n✨ Stream finished in ${elapsedSeconds}s\n`);
+        console.log(`\n✨ Video place extraction finished in ${elapsedSeconds}s\n`);
 
-        // ** STREAM EVENT 3: Routed Itinerary (Lines appear, final status)
-        sendEvent("routed", {
-            itinerary: routedPlan.itinerary,
-            processingTimeSeconds: parseFloat(elapsedSeconds)
+        // Build the primary destination name from locations
+        const destination = aiResult.locations.map(l => l.city).join(", ");
+
+        // ── Step 4: Return places with country/city metadata ──
+        sendEvent("places", {
+            destination,
+            locations: aiResult.locations,
+            totalPlaces: places.length,
+            places,
+            videoTranscript: aiResult.videoTranscript,
+            aiUnderstanding: aiResult.aiUnderstanding,
+            processingTimeSeconds: parseFloat(elapsedSeconds),
         });
 
-        // End stream naturally
         sendEvent("done", { message: "Stream complete" });
         return res.end();
 
     } catch (error) {
-        console.error("❌ Video Streaming failed:", error.message);
-        sendEvent("error", { message: "Failed to plan trip from video.", details: error.message });
+        console.error("❌ Video place extraction failed:", error.message);
+        sendEvent("error", { message: "Failed to extract places from video.", details: error.message });
         return res.end();
     }
 }

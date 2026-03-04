@@ -152,3 +152,91 @@ export async function discoverPlaces(destination, interests, days = 3) {
 
     return allPlaces;
 }
+
+/**
+ * Look up places extracted from a video, grouped by location (country/city).
+ * Searches each spot in its correct city context for accurate results.
+ * Returns a flat array of place objects with country/city metadata attached.
+ *
+ * @param {Object[]} locations - Array of { country, city, spots: string[] } from Gemini
+ * @returns {Promise<Object[]>} Array of place objects with country/city fields
+ */
+export async function lookupPlacesByLocations(locations) {
+    const totalSpots = locations.reduce((sum, loc) => sum + (loc.spots?.length || 0), 0);
+    console.log(`🔍 Looking up ${totalSpots} places across ${locations.length} location(s) via Places API`);
+
+    const seenIds = new Set();
+    const allPlaces = [];
+
+    for (const location of locations) {
+        const { country, city, spots } = location;
+        if (!Array.isArray(spots)) continue;
+
+        for (const spotName of spots) {
+            const query = `${spotName} in ${city}, ${country}`;
+            const url = `${TEXT_SEARCH_URL}?query=${encodeURIComponent(query)}&key=${config.googleMapsApiKey}`;
+
+            for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+                try {
+                    const response = await fetch(url);
+                    const data = await response.json();
+
+                    if (data.status === "OK" && data.results && data.results.length > 0) {
+                        const p = data.results[0];
+
+                        if (!seenIds.has(p.place_id)) {
+                            seenIds.add(p.place_id);
+                            allPlaces.push({
+                                id: p.place_id,
+                                name: p.name || spotName,
+                                address: p.formatted_address || "",
+                                rating: p.rating || null,
+                                userRatingCount: p.user_ratings_total || 0,
+                                types: p.types || [],
+                                primaryType: p.types?.[0] || null,
+                                coordinates: p.geometry?.location ? {
+                                    lat: p.geometry.location.lat,
+                                    lng: p.geometry.location.lng
+                                } : null,
+                                googleMapsUri: `https://www.google.com/maps/place/?q=place_id:${p.place_id}`,
+                                editorialSummary: null,
+                                photoUrl: p.photos && p.photos.length > 0
+                                    ? `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photo_reference=${p.photos[0].photo_reference}&key=${config.googleMapsApiKey}`
+                                    : null,
+                                interest: "video",
+                                country: country,
+                                city: city,
+                            });
+                        }
+                        break;
+                    }
+
+                    if (["ZERO_RESULTS", "INVALID_REQUEST", "REQUEST_DENIED"].includes(data.status)) {
+                        console.warn(`⚠️  No results for "${spotName}": ${data.status}`);
+                        break;
+                    }
+
+                    console.warn(`⚠️  Places API attempt ${attempt}/${MAX_RETRIES} for "${spotName}": ${data.status}`);
+                } catch (err) {
+                    console.warn(`⚠️  Places API attempt ${attempt}/${MAX_RETRIES} for "${spotName}" threw: ${err.message}`);
+                }
+
+                if (attempt < MAX_RETRIES) {
+                    await new Promise(r => setTimeout(r, BASE_DELAY_MS * Math.pow(2, attempt - 1)));
+                }
+            }
+
+            // Small delay between requests to avoid rate limiting
+            await new Promise(r => setTimeout(r, 200));
+        }
+    }
+
+    console.log(`✅ Found ${allPlaces.length}/${totalSpots} places via Places API`);
+
+    // Upload place photos to Cloudflare R2 for permanent storage
+    await uploadPlacePhotos(allPlaces);
+
+    return allPlaces;
+}
+
+

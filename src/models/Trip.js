@@ -28,6 +28,10 @@ const TripSchema = new mongoose.Schema(
             type: mongoose.Schema.Types.Mixed,
             default: null,
         },
+        tripRepPic: {
+            type: String,
+            default: null,
+        },
     },
     { timestamps: true }
 );

@@ -10,6 +10,21 @@ export const saveTrip = async (req, res, next) => {
             return res.status(400).json({ error: "userId and destination are required" });
         }
 
+        // Pick the best image from discoveredPlaces to represent this trip
+        let tripRepPic = null;
+        if (Array.isArray(discoveredPlaces) && discoveredPlaces.length > 0) {
+            const withPhotos = discoveredPlaces
+                .filter(p => p.photoUrl && p.rating && p.userRatingCount)
+                .sort((a, b) => {
+                    const scoreA = a.rating * Math.log10(a.userRatingCount || 1);
+                    const scoreB = b.rating * Math.log10(b.userRatingCount || 1);
+                    return scoreB - scoreA;
+                });
+            if (withPhotos.length > 0) {
+                tripRepPic = withPhotos[0].photoUrl;
+            }
+        }
+
         const trip = await Trip.create({
             userId,
             destination,
@@ -17,6 +32,7 @@ export const saveTrip = async (req, res, next) => {
             interests,
             itinerary,
             discoveredPlaces,
+            tripRepPic,
         });
 
         // Add trip reference to the user's trips array
@@ -34,7 +50,7 @@ export const getUserTrips = async (req, res, next) => {
         const { userID } = req.params;
         const trips = await Trip.find({ userId: userID })
             .sort({ createdAt: -1 })
-            .select("destination days interests createdAt")
+            .select("destination days interests createdAt tripRepPic")
             .lean();
 
         res.status(200).json({ success: true, trips });

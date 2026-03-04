@@ -34,6 +34,12 @@ const UserSchema = new mongoose.Schema(
                 ref: "Trip",
             },
         ],
+        spots: [
+            {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "Spot",
+            },
+        ],
     },
     { timestamps: true }
 );

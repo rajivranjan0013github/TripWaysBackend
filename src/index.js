@@ -7,6 +7,7 @@ import tripRoutes from "./routes/tripRoutes.js";
 import loginRoutes from "./routes/loginRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import savedTripRoutes from "./routes/savedTripRoutes.js";
+import spotRoutes from "./routes/spotRoutes.js";
 
 const app = express();
 
@@ -33,6 +34,7 @@ app.use("/api", tripRoutes);
 app.use("/api/login", loginRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/trips", savedTripRoutes);
+app.use("/api/spots", spotRoutes);
 
 // Health check
 app.get("/", (req, res) => {
@@ -42,12 +44,13 @@ app.get("/", (req, res) => {
         endpoints: {
             planTrip: "POST /api/plan",
             planTripStream: "POST /api/plan-stream",
-            planTripStreamFromVideo: "POST /api/plan-stream-video",
+            planTripStreamFromVideo: "POST /api/extract-video-places",
             discoverPlaces: "POST /api/discover-places",
             config: "GET /api/config",
             login: "POST /api/login/google/loginSignUp",
             users: "GET /api/users/:userID",
             trips: "GET /api/trips/user/:userID",
+            spots: "GET /api/spots/user/:userID",
         },
     });
 });
