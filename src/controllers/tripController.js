@@ -199,10 +199,21 @@ export async function extractVideoPlaces(req, res) {
         sendEvent("progress", { message: `Extracted places from ${aiResult.locations.length} location(s). Looking up details...` });
 
         // ── Step 3: Look up each place via Google Places API (per-city) ──
+        //    Stream each batch of resolved places to the frontend immediately
         phaseStart = Date.now();
-        const places = await lookupPlacesByLocations(aiResult.locations, (progressMsg) => {
-            sendEvent("progress", { message: progressMsg });
-        });
+        const places = await lookupPlacesByLocations(
+            aiResult.locations,
+            (progressMsg) => {
+                sendEvent("progress", { message: progressMsg });
+            },
+            (batchPlaces, totalFound, totalExpected) => {
+                sendEvent("place_batch", {
+                    places: batchPlaces,
+                    totalFound,
+                    totalExpected,
+                });
+            }
+        );
         const placesLookupTime = ((Date.now() - phaseStart) / 1000).toFixed(1);
         console.log(`⏱️ [extractVideoPlaces] Places API lookup: ${placesLookupTime}s`);
 

@@ -205,18 +205,18 @@ async function lookupSingleSpot(spotName, city, country) {
     return null;
 }
 
-const BATCH_SIZE = 5;
+const BATCH_SIZE = 10;
 
 /**
  * Look up places extracted from a video, grouped by location (country/city).
  * Searches each spot in its correct city context for accurate results.
- * Uses batched concurrency (5 at a time) for speed.
+ * Uses batched concurrency (10 at a time) for speed, with per-batch R2 uploads.
  *
  * @param {Object[]} locations - Array of { country, city, spots: string[] } from Gemini
  * @param {function} [onProgress] - Optional callback for SSE progress updates
  * @returns {Promise<Object[]>} Array of place objects with country/city fields
  */
-export async function lookupPlacesByLocations(locations, onProgress) {
+export async function lookupPlacesByLocations(locations, onProgress, onBatchReady) {
     const totalSpots = locations.reduce((sum, loc) => sum + (loc.spots?.length || 0), 0);
     console.log(`🔍 Looking up ${totalSpots} places across ${locations.length} location(s) via Places API`);
 
@@ -233,8 +233,9 @@ export async function lookupPlacesByLocations(locations, onProgress) {
     const seenIds = new Set();
     const allPlaces = [];
     let completed = 0;
+    const r2UploadPromises = [];
 
-    // Process in parallel batches
+    // Process in parallel batches of 10
     for (let i = 0; i < allSpotTasks.length; i += BATCH_SIZE) {
         const batch = allSpotTasks.slice(i, i + BATCH_SIZE);
         const batchNum = Math.floor(i / BATCH_SIZE) + 1;
@@ -248,6 +249,7 @@ export async function lookupPlacesByLocations(locations, onProgress) {
             batch.map(({ spotName, city, country }) => lookupSingleSpot(spotName, city, country))
         );
 
+        const batchPlaces = [];
         for (const result of batchResults) {
             completed++;
             if (result.status === 'fulfilled' && result.value) {
@@ -255,22 +257,34 @@ export async function lookupPlacesByLocations(locations, onProgress) {
                 if (!seenIds.has(place.id)) {
                     seenIds.add(place.id);
                     allPlaces.push(place);
+                    batchPlaces.push(place);
                 }
             }
         }
 
+        // Stream this batch's resolved places to the caller immediately
+        if (batchPlaces.length > 0 && onBatchReady) {
+            onBatchReady(batchPlaces, allPlaces.length, totalSpots);
+        }
+
+        // Pipeline: start R2 upload for this batch's photos immediately (don't wait)
+        if (batchPlaces.length > 0) {
+            r2UploadPromises.push(
+                uploadPlacePhotos(batchPlaces).catch(err =>
+                    console.warn('⚠️ Background R2 upload failed (video batch):', err.message)
+                )
+            );
+        }
+
         // Small delay between batches to avoid rate limiting
         if (i + BATCH_SIZE < allSpotTasks.length) {
-            await new Promise(r => setTimeout(r, 100));
+            await new Promise(r => setTimeout(r, 50));
         }
     }
 
     console.log(`✅ Found ${allPlaces.length}/${totalSpots} places via Places API`);
 
-    // Fire-and-forget: upload to R2 in background (don't block the response)
-    uploadPlacePhotos(allPlaces).catch(err =>
-        console.warn('⚠️ Background R2 upload failed (video):', err.message)
-    );
+    // R2 uploads are already running in background — no need to wait or re-trigger
 
     return allPlaces;
 }
