@@ -62,5 +62,18 @@ app.use(errorHandler);
 app.listen(config.port, () => {
     console.log(`\n🚀 Travel Backend running on http://localhost:${config.port}`);
     console.log(`📍 Plan a trip: POST http://localhost:${config.port}/api/plan`);
-});
 
+    // Pre-warm Gemini connection (avoids cold-start TCP/TLS overhead on first request)
+    import("@google/genai").then(({ GoogleGenAI }) => {
+        const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
+        ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: "hi",
+            config: { maxOutputTokens: 5 },
+        }).then(() => {
+            console.log("✅ Gemini connection pre-warmed");
+        }).catch(() => {
+            // Silently fail — not critical
+        });
+    }).catch(() => { });
+});

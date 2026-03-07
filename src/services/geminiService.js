@@ -111,14 +111,19 @@ Respond with ONLY valid JSON in this exact structure:
 export async function generatePlanFromVideo(videoUrl, days, onProgress = () => { }) {
   let localVideoPath = null;
   let uploadResult = null;
+  const totalStart = Date.now();
+  const timings = {};
 
   try {
     // 1. Download the Video
     onProgress("Downloading video from URL...");
+    let phaseStart = Date.now();
     localVideoPath = await downloadVideo(videoUrl);
+    timings.download = ((Date.now() - phaseStart) / 1000).toFixed(1);
 
     // 2. Upload to Gemini
     onProgress("Uploading video to AI for analysis...");
+    phaseStart = Date.now();
 
     // We upload via the new @google/genai SDK mechanism
     console.log(`☁️ Uploading local file to Gemini: ${localVideoPath}`);
@@ -126,18 +131,21 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
       file: localVideoPath,
       mimeType: "video/mp4"
     });
+    timings.upload = ((Date.now() - phaseStart) / 1000).toFixed(1);
 
-    console.log(`☁️ Uploaded as: ${uploadResult.name}. Current state: ${uploadResult.state}`);
+    console.log(`☁️ Uploaded as: ${uploadResult.name}. Current state: ${uploadResult.state}. ⏱️ Upload: ${timings.upload}s`);
 
     // 3. Wait for PROCESSING to finish
     // Gemini videos require waiting until the file state is 'ACTIVE'
     onProgress("Processing video chunks (this takes a few seconds)...");
+    phaseStart = Date.now();
 
     let fileState = uploadResult.state;
+    let pollDelay = 1500; // Start at 1.5s, faster than the original 3s
     while (fileState === 'PROCESSING') {
       console.log('⏳ Waiting for video to finish processing on Gemini...');
-      // Sleep 3 seconds
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      await new Promise((resolve) => setTimeout(resolve, pollDelay));
+      pollDelay = Math.min(pollDelay * 1.5, 5000); // exponential backoff, max 5s
 
       const checkResult = await ai.files.get({ name: uploadResult.name });
       fileState = checkResult.state;
@@ -147,10 +155,12 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
       }
     }
 
-    console.log(`✅ Video is ${fileState}`);
+    timings.processing = ((Date.now() - phaseStart) / 1000).toFixed(1);
+    console.log(`✅ Video is ${fileState}. ⏱️ Processing wait: ${timings.processing}s`);
 
     // 4. Prompt Gemini with the uploaded file
     onProgress("🎬 AI is watching the video and extracting places...");
+    phaseStart = Date.now();
     const prompt = `You are an expert travel planner and video analyst.
     Watch the attached video carefully.
   
@@ -217,6 +227,17 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
       throw new Error("Gemini response missing 'itinerary' array");
     }
 
+    timings.geminiInference = ((Date.now() - phaseStart) / 1000).toFixed(1);
+    timings.total = ((Date.now() - totalStart) / 1000).toFixed(1);
+
+    console.log(`\n📊 ═══ generatePlanFromVideo TIMING BREAKDOWN ═══`);
+    console.log(`   📥 Video Download:      ${timings.download}s`);
+    console.log(`   ☁️  Gemini Upload:       ${timings.upload}s`);
+    console.log(`   ⏳ Processing Wait:      ${timings.processing}s`);
+    console.log(`   🤖 Gemini Inference:     ${timings.geminiInference}s`);
+    console.log(`   ⏱️  TOTAL:               ${timings.total}s`);
+    console.log(`═══════════════════════════════════════════════\n`);
+
     console.log(`✅ Gemini generated ${plan.itinerary.length}-day plan for ${plan.destination}`);
     return plan;
 
@@ -256,28 +277,37 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
 export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { }) {
   let localVideoPath = null;
   let uploadResult = null;
+  const totalStart = Date.now();
+  const timings = {};
 
   try {
     // 1. Download the Video
     onProgress("Downloading video from URL...");
+    let phaseStart = Date.now();
     localVideoPath = await downloadVideo(videoUrl);
+    timings.download = ((Date.now() - phaseStart) / 1000).toFixed(1);
 
     // 2. Upload to Gemini
     onProgress("Uploading video to AI for analysis...");
+    phaseStart = Date.now();
     console.log(`☁️ Uploading local file to Gemini: ${localVideoPath}`);
     uploadResult = await ai.files.upload({
       file: localVideoPath,
       mimeType: "video/mp4"
     });
+    timings.upload = ((Date.now() - phaseStart) / 1000).toFixed(1);
 
-    console.log(`☁️ Uploaded as: ${uploadResult.name}. Current state: ${uploadResult.state}`);
+    console.log(`☁️ Uploaded as: ${uploadResult.name}. Current state: ${uploadResult.state}. ⏱️ Upload: ${timings.upload}s`);
 
     // 3. Wait for PROCESSING to finish
     onProgress("Processing video chunks (this takes a few seconds)...");
+    phaseStart = Date.now();
     let fileState = uploadResult.state;
+    let pollDelay = 1500; // Start at 1.5s, faster than the original 3s
     while (fileState === 'PROCESSING') {
       console.log('⏳ Waiting for video to finish processing on Gemini...');
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      await new Promise((resolve) => setTimeout(resolve, pollDelay));
+      pollDelay = Math.min(pollDelay * 1.5, 5000); // exponential backoff, max 5s
       const checkResult = await ai.files.get({ name: uploadResult.name });
       fileState = checkResult.state;
       if (fileState === 'FAILED') {
@@ -285,10 +315,12 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { })
       }
     }
 
-    console.log(`✅ Video is ${fileState}`);
+    timings.processing = ((Date.now() - phaseStart) / 1000).toFixed(1);
+    console.log(`✅ Video is ${fileState}. ⏱️ Processing wait: ${timings.processing}s`);
 
     // 4. Prompt Gemini to extract places grouped by country and city
     onProgress("🎬 AI is watching the video and extracting places...");
+    phaseStart = Date.now();
     const prompt = `You are an expert travel analyst and video reviewer.
     Watch the attached video carefully.
 
@@ -350,6 +382,17 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { })
     }
 
     const totalSpots = result.locations.reduce((sum, loc) => sum + (loc.spots?.length || 0), 0);
+    timings.geminiInference = ((Date.now() - phaseStart) / 1000).toFixed(1);
+    timings.total = ((Date.now() - totalStart) / 1000).toFixed(1);
+
+    console.log(`\n📊 ═══ extractPlacesFromVideoAI TIMING BREAKDOWN ═══`);
+    console.log(`   📥 Video Download:      ${timings.download}s`);
+    console.log(`   ☁️  Gemini Upload:       ${timings.upload}s`);
+    console.log(`   ⏳ Processing Wait:      ${timings.processing}s`);
+    console.log(`   🤖 Gemini Inference:     ${timings.geminiInference}s`);
+    console.log(`   ⏱️  TOTAL:               ${timings.total}s`);
+    console.log(`═══════════════════════════════════════════════════\n`);
+
     console.log(`✅ Gemini extracted ${totalSpots} places across ${result.locations.length} location(s)`);
     return result;
 

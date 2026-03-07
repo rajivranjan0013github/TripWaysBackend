@@ -25,6 +25,7 @@ export async function downloadVideo(videoUrl) {
     const id = crypto.randomBytes(8).toString("hex");
     const outputPath = path.join(TEMP_DIR, `video_${id}.mp4`);
 
+    const dlStart = Date.now();
     console.log(`📥 Downloading video to ${outputPath}...`);
 
     try {
@@ -51,7 +52,7 @@ export async function downloadVideo(videoUrl) {
             throw new Error("Download completed but file not found.");
         }
 
-        console.log(`✅ Video downloaded successfully.`);
+        console.log(`✅ Video downloaded successfully. ⏱️ ${((Date.now() - dlStart) / 1000).toFixed(1)}s`);
         return outputPath;
     } catch (error) {
         console.error("❌ Failed to download video:", error);

@@ -56,6 +56,12 @@ async function objectExists(key) {
 }
 
 /**
+ * In-memory cache: placeId → R2 public URL.
+ * Avoids repeated HeadObjectCommand network calls for the same photo.
+ */
+const _r2UrlCache = new Map();
+
+/**
  * Download an image from a Google Places photo URL and upload it to Cloudflare R2.
  * Returns the permanent public R2 URL, or null on failure.
  *
@@ -67,6 +73,11 @@ export async function uploadPlacePhoto(googlePhotoUrl, placeId) {
     const client = getClient();
     if (!client || !googlePhotoUrl || !placeId) return null;
 
+    // Check in-memory cache first (zero latency)
+    if (_r2UrlCache.has(placeId)) {
+        return _r2UrlCache.get(placeId);
+    }
+
     const cfg = getConfig();
     const key = `places/${placeId}.jpg`;
 
@@ -74,7 +85,9 @@ export async function uploadPlacePhoto(googlePhotoUrl, placeId) {
         // Skip upload if the image already exists in R2 (dedup)
         const exists = await objectExists(key);
         if (exists) {
-            return `${cfg.publicUrl}/${key}`;
+            const publicUrl = `${cfg.publicUrl}/${key}`;
+            _r2UrlCache.set(placeId, publicUrl);
+            return publicUrl;
         }
 
         // Download the image from Google
@@ -98,6 +111,7 @@ export async function uploadPlacePhoto(googlePhotoUrl, placeId) {
         );
 
         const publicUrl = `${cfg.publicUrl}/${key}`;
+        _r2UrlCache.set(placeId, publicUrl);
         console.log(`📸 Uploaded photo for ${placeId} → ${publicUrl}`);
         return publicUrl;
     } catch (err) {

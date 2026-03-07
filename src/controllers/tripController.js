@@ -189,17 +189,30 @@ export async function extractVideoPlaces(req, res) {
         console.log(`${"═".repeat(50)}\n`);
 
         // ── Step 2: Extract place names from video via Gemini ──
+        let phaseStart = Date.now();
         const aiResult = await extractPlacesFromVideoAI(videoUrl.trim(), (statusMessage) => {
             sendEvent("progress", { message: statusMessage });
         });
+        const aiExtractionTime = ((Date.now() - phaseStart) / 1000).toFixed(1);
+        console.log(`⏱️ [extractVideoPlaces] AI extraction: ${aiExtractionTime}s`);
 
         sendEvent("progress", { message: `Extracted places from ${aiResult.locations.length} location(s). Looking up details...` });
 
         // ── Step 3: Look up each place via Google Places API (per-city) ──
-        const places = await lookupPlacesByLocations(aiResult.locations);
+        phaseStart = Date.now();
+        const places = await lookupPlacesByLocations(aiResult.locations, (progressMsg) => {
+            sendEvent("progress", { message: progressMsg });
+        });
+        const placesLookupTime = ((Date.now() - phaseStart) / 1000).toFixed(1);
+        console.log(`⏱️ [extractVideoPlaces] Places API lookup: ${placesLookupTime}s`);
 
         const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.log(`\n✨ Video place extraction finished in ${elapsedSeconds}s\n`);
+
+        console.log(`\n📊 ═══ extractVideoPlaces TIMING BREAKDOWN ═══`);
+        console.log(`   🤖 AI Extraction (download+upload+process+infer): ${aiExtractionTime}s`);
+        console.log(`   🔍 Places API Lookup:                             ${placesLookupTime}s`);
+        console.log(`   ⏱️  TOTAL:                                         ${elapsedSeconds}s`);
+        console.log(`═══════════════════════════════════════════════════\n`);
 
         // Build the primary destination name from locations
         const destination = aiResult.locations.map(l => l.city).join(", ");
