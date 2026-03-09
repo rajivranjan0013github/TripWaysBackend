@@ -1,19 +1,73 @@
 import config from "../config/apiConfig.js";
 import { uploadPlacePhotos } from "./r2Service.js";
 
-const TEXT_SEARCH_URL =
-    "https://maps.googleapis.com/maps/api/place/textsearch/json";
+// ── Places API (v1) endpoints ──
+const TEXT_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText";
 
 const MAX_RESULTS_PER_INTEREST = 8;
-
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 500;
 
+// Standard field mask for text search — controls billing & response shape
+const TEXT_SEARCH_FIELD_MASK = [
+    "places.id",
+    "places.displayName",
+    "places.formattedAddress",
+    "places.rating",
+    "places.userRatingCount",
+    "places.types",
+    "places.primaryType",
+    "places.primaryTypeDisplayName",
+    "places.location",
+    "places.photos",
+    "places.editorialSummary",
+    "places.googleMapsUri",
+].join(",");
+
+/**
+ * Build a v1 photo URL from a photo resource name.
+ * @param {string} photoName - e.g. "places/xxx/photos/yyy"
+ * @param {number} maxWidth
+ * @returns {string} URL
+ */
+function buildPhotoUrl(photoName, maxWidth = 400) {
+    return `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=${maxWidth}&key=${config.googleMapsApiKey}`;
+}
+
+/**
+ * Map a v1 place object to our internal shape.
+ */
+function mapPlace(p, interest, extraFields = {}) {
+    const photoUrl =
+        p.photos && p.photos.length > 0
+            ? buildPhotoUrl(p.photos[0].name, 400)
+            : null;
+
+    return {
+        id: p.id,
+        name: p.displayName?.text || "Unknown",
+        address: p.formattedAddress || "",
+        rating: p.rating || null,
+        userRatingCount: p.userRatingCount || 0,
+        types: p.types || [],
+        primaryType: p.primaryType || null,
+        primaryTypeDisplayName: p.primaryTypeDisplayName?.text || null,
+        coordinates: p.location
+            ? { lat: p.location.latitude, lng: p.location.longitude }
+            : null,
+        googleMapsUri: p.googleMapsUri || null,
+        editorialSummary: p.editorialSummary?.text || null,
+        photoUrl,
+        interest,
+        ...extraFields,
+    };
+}
+
 /**
  * Search for places matching a single interest in a destination
- * using the legacy Places Text Search API.
- * 
- * Includes exponential backoff for OVER_QUERY_LIMIT.
+ * using the Places API (v1) Text Search.
+ *
+ * Includes exponential backoff for transient errors.
  *
  * @param {string} destination - e.g. "Manali, India"
  * @param {string} interest - e.g. "adventure"
@@ -21,63 +75,78 @@ const BASE_DELAY_MS = 500;
  * @returns {Promise<Object[]>} Array of place objects
  */
 async function searchPlacesForInterest(destination, interest, limit) {
-    const query = `best ${interest} places to visit in ${destination}`;
-    const url = `${TEXT_SEARCH_URL}?query=${encodeURIComponent(query)}&key=${config.googleMapsApiKey}`;
+    const textQuery = `best ${interest} places to visit in ${destination}`;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
-            const response = await fetch(url);
+            const response = await fetch(TEXT_SEARCH_URL, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-Goog-Api-Key": config.googleMapsApiKey,
+                    "X-Goog-FieldMask": TEXT_SEARCH_FIELD_MASK,
+                },
+                body: JSON.stringify({
+                    textQuery,
+                    maxResultCount: 20, // request more, filter down
+                }),
+            });
+
             const data = await response.json();
 
-            if (data.status === "OK") {
-                let places = data.results || [];
+            if (data.places && data.places.length > 0) {
+                let places = data.places;
 
                 // Filter for quality: must have rating >= 4.0 and at least 20 reviews
-                places = places.filter(p => p.rating && p.rating >= 4.0 && p.user_ratings_total && p.user_ratings_total >= 20);
+                places = places.filter(
+                    (p) =>
+                        p.rating &&
+                        p.rating >= 4.0 &&
+                        p.userRatingCount &&
+                        p.userRatingCount >= 20
+                );
 
-                // Sort by quality score: rating * log10(user_ratings_total)
+                // Sort by quality score: rating * log10(userRatingCount)
                 places.sort((a, b) => {
-                    const scoreA = a.rating * Math.log10(a.user_ratings_total);
-                    const scoreB = b.rating * Math.log10(b.user_ratings_total);
+                    const scoreA =
+                        a.rating * Math.log10(a.userRatingCount);
+                    const scoreB =
+                        b.rating * Math.log10(b.userRatingCount);
                     return scoreB - scoreA;
                 });
 
                 // Take only top N results per interest
                 places = places.slice(0, limit);
 
-                return places.map((p) => ({
-                    id: p.place_id,
-                    name: p.name || "Unknown",
-                    address: p.formatted_address || "",
-                    rating: p.rating || null,
-                    userRatingCount: p.user_ratings_total || 0,
-                    types: p.types || [],
-                    primaryType: p.types?.[0] || null,
-                    coordinates: p.geometry?.location ? {
-                        lat: p.geometry.location.lat,
-                        lng: p.geometry.location.lng
-                    } : null,
-                    googleMapsUri: `https://www.google.com/maps/place/?q=place_id:${p.place_id}`,
-                    editorialSummary: null, // not available in legacy API
-                    photoUrl: p.photos && p.photos.length > 0
-                        ? `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photo_reference=${p.photos[0].photo_reference}&key=${config.googleMapsApiKey}`
-                        : null,
-                    interest, // tag which interest sourced this
-                }));
+                return places.map((p) => mapPlace(p, interest));
             }
 
-            // Non-retryable
-            if (["ZERO_RESULTS", "INVALID_REQUEST", "REQUEST_DENIED"].includes(data.status)) {
+            // Empty results
+            if (data.places && data.places.length === 0) {
                 console.warn(
-                    `⚠️  Places API error for "${interest}": ${data.status} — ${data.error_message || "no results"}`
+                    `⚠️  No results for "${interest}" in "${destination}"`
                 );
                 return [];
             }
 
-            // OVER_QUERY_LIMIT or UNKNOWN_ERROR — worth retrying
-            console.warn(
-                `⚠️  Places API attempt ${attempt}/${MAX_RETRIES} for "${interest}": ${data.status}`
-            );
+            // Error response from v1
+            if (data.error) {
+                const code = data.error.code;
+                const msg = data.error.message || "Unknown error";
+
+                // Non-retryable errors
+                if ([400, 403, 404].includes(code)) {
+                    console.warn(
+                        `⚠️  Places API error for "${interest}": ${code} — ${msg}`
+                    );
+                    return [];
+                }
+
+                // 429 (rate limit) or 5xx — worth retrying
+                console.warn(
+                    `⚠️  Places API attempt ${attempt}/${MAX_RETRIES} for "${interest}": ${code} — ${msg}`
+                );
+            }
         } catch (err) {
             console.warn(
                 `⚠️  Places API attempt ${attempt}/${MAX_RETRIES} for "${interest}" threw: ${err.message}`
@@ -86,17 +155,21 @@ async function searchPlacesForInterest(destination, interest, limit) {
 
         // Exponential backoff before retry
         if (attempt < MAX_RETRIES) {
-            await new Promise((r) => setTimeout(r, BASE_DELAY_MS * Math.pow(2, attempt - 1)));
+            await new Promise((r) =>
+                setTimeout(r, BASE_DELAY_MS * Math.pow(2, attempt - 1))
+            );
         }
     }
 
-    console.warn(`❌ Places API failed for "${interest}" after ${MAX_RETRIES} attempts`);
+    console.warn(
+        `❌ Places API failed for "${interest}" after ${MAX_RETRIES} attempts`
+    );
     return [];
 }
 
 /**
  * Discover places in a destination matching a list of interests.
- * Uses the Google Places Text Search API — no LLM involved.
+ * Uses the Google Places API (v1) Text Search.
  *
  * @param {string} destination - Destination name (e.g. "Manali")
  * @param {string[]} interests - Array of interest strings
@@ -104,21 +177,27 @@ async function searchPlacesForInterest(destination, interest, limit) {
  * @returns {Promise<Object[]>} Deduplicated array of discovered places
  */
 export async function discoverPlaces(destination, interests, days = 3) {
-    console.log(`🔍 Discovering places in "${destination}" for interests: ${interests.join(", ")}`);
+    console.log(
+        `🔍 Discovering places in "${destination}" for interests: ${interests.join(", ")}`
+    );
 
     const isSingleInterest = interests.length === 1;
 
     // Parallelize interest searches with staggered starts (100ms apart)
     // to avoid slamming Google with simultaneous requests
     const promises = interests.map((interest, i) => {
-        return new Promise(resolve => {
+        return new Promise((resolve) => {
             setTimeout(async () => {
                 let limit = MAX_RESULTS_PER_INTEREST;
                 if (!isSingleInterest) {
-                    if (interest === 'food') limit = Math.min(days * 2, MAX_RESULTS_PER_INTEREST);
-                    else if (interest === 'shopping') limit = Math.min(days * 1, MAX_RESULTS_PER_INTEREST);
+                    if (interest === "food")
+                        limit = Math.min(days * 2, MAX_RESULTS_PER_INTEREST);
+                    else if (interest === "shopping")
+                        limit = Math.min(days * 1, MAX_RESULTS_PER_INTEREST);
                 }
-                resolve(await searchPlacesForInterest(destination, interest, limit));
+                resolve(
+                    await searchPlacesForInterest(destination, interest, limit)
+                );
             }, i * 100);
         });
     });
@@ -138,11 +217,16 @@ export async function discoverPlaces(destination, interests, days = 3) {
         }
     }
 
-    console.log(`✅ Discovered ${allPlaces.length} unique places across ${interests.length} interest(s)`);
+    console.log(
+        `✅ Discovered ${allPlaces.length} unique places across ${interests.length} interest(s)`
+    );
 
     // Fire-and-forget: upload to R2 in background (don't block the response)
-    uploadPlacePhotos(allPlaces).catch(err =>
-        console.warn('⚠️ Background R2 upload failed (discover):', err.message)
+    uploadPlacePhotos(allPlaces).catch((err) =>
+        console.warn(
+            "⚠️ Background R2 upload failed (discover):",
+            err.message
+        )
     );
 
     return allPlaces;
@@ -153,55 +237,62 @@ export async function discoverPlaces(destination, interests, days = 3) {
  * Returns a place object or null if not found.
  */
 async function lookupSingleSpot(spotName, city, country) {
-    const query = `${spotName} in ${city}, ${country}`;
-    const url = `${TEXT_SEARCH_URL}?query=${encodeURIComponent(query)}&key=${config.googleMapsApiKey}`;
+    const textQuery = `${spotName} in ${city}, ${country}`;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
-            const response = await fetch(url);
+            const response = await fetch(TEXT_SEARCH_URL, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-Goog-Api-Key": config.googleMapsApiKey,
+                    "X-Goog-FieldMask": TEXT_SEARCH_FIELD_MASK,
+                },
+                body: JSON.stringify({
+                    textQuery,
+                    maxResultCount: 1,
+                }),
+            });
+
             const data = await response.json();
 
-            if (data.status === "OK" && data.results && data.results.length > 0) {
-                const p = data.results[0];
-                return {
-                    id: p.place_id,
-                    name: p.name || spotName,
-                    address: p.formatted_address || "",
-                    rating: p.rating || null,
-                    userRatingCount: p.user_ratings_total || 0,
-                    types: p.types || [],
-                    primaryType: p.types?.[0] || null,
-                    coordinates: p.geometry?.location ? {
-                        lat: p.geometry.location.lat,
-                        lng: p.geometry.location.lng
-                    } : null,
-                    googleMapsUri: `https://www.google.com/maps/place/?q=place_id:${p.place_id}`,
-                    editorialSummary: null,
-                    photoUrl: p.photos && p.photos.length > 0
-                        ? `https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photo_reference=${p.photos[0].photo_reference}&key=${config.googleMapsApiKey}`
-                        : null,
-                    interest: "video",
-                    country,
-                    city,
-                };
+            if (data.places && data.places.length > 0) {
+                return mapPlace(data.places[0], "video", { country, city });
             }
 
-            if (["ZERO_RESULTS", "INVALID_REQUEST", "REQUEST_DENIED"].includes(data.status)) {
-                console.warn(`⚠️  No results for "${spotName}": ${data.status}`);
+            if (data.places && data.places.length === 0) {
+                console.warn(`⚠️  No results for "${spotName}"`);
                 return null;
             }
 
-            console.warn(`⚠️  Places API attempt ${attempt}/${MAX_RETRIES} for "${spotName}": ${data.status}`);
+            if (data.error) {
+                const code = data.error.code;
+                if ([400, 403, 404].includes(code)) {
+                    console.warn(
+                        `⚠️  No results for "${spotName}": ${data.error.message}`
+                    );
+                    return null;
+                }
+                console.warn(
+                    `⚠️  Places API attempt ${attempt}/${MAX_RETRIES} for "${spotName}": ${code}`
+                );
+            }
         } catch (err) {
-            console.warn(`⚠️  Places API attempt ${attempt}/${MAX_RETRIES} for "${spotName}" threw: ${err.message}`);
+            console.warn(
+                `⚠️  Places API attempt ${attempt}/${MAX_RETRIES} for "${spotName}" threw: ${err.message}`
+            );
         }
 
         if (attempt < MAX_RETRIES) {
-            await new Promise(r => setTimeout(r, BASE_DELAY_MS * Math.pow(2, attempt - 1)));
+            await new Promise((r) =>
+                setTimeout(r, BASE_DELAY_MS * Math.pow(2, attempt - 1))
+            );
         }
     }
 
-    console.warn(`❌ Places API failed for "${spotName}" after ${MAX_RETRIES} attempts`);
+    console.warn(
+        `❌ Places API failed for "${spotName}" after ${MAX_RETRIES} attempts`
+    );
     return null;
 }
 
@@ -214,11 +305,21 @@ const BATCH_SIZE = 10;
  *
  * @param {Object[]} locations - Array of { country, city, spots: string[] } from Gemini
  * @param {function} [onProgress] - Optional callback for SSE progress updates
+ * @param {function} [onBatchReady] - Optional callback for streaming batches
  * @returns {Promise<Object[]>} Array of place objects with country/city fields
  */
-export async function lookupPlacesByLocations(locations, onProgress, onBatchReady) {
-    const totalSpots = locations.reduce((sum, loc) => sum + (loc.spots?.length || 0), 0);
-    console.log(`🔍 Looking up ${totalSpots} places across ${locations.length} location(s) via Places API`);
+export async function lookupPlacesByLocations(
+    locations,
+    onProgress,
+    onBatchReady
+) {
+    const totalSpots = locations.reduce(
+        (sum, loc) => sum + (loc.spots?.length || 0),
+        0
+    );
+    console.log(
+        `🔍 Looking up ${totalSpots} places across ${locations.length} location(s) via Places API (v1)`
+    );
 
     // Flatten all spots into a single list with their location context
     const allSpotTasks = [];
@@ -242,17 +343,21 @@ export async function lookupPlacesByLocations(locations, onProgress, onBatchRead
         const totalBatches = Math.ceil(allSpotTasks.length / BATCH_SIZE);
 
         if (onProgress) {
-            onProgress(`Looking up places (batch ${batchNum}/${totalBatches})...`);
+            onProgress(
+                `Looking up places (batch ${batchNum}/${totalBatches})...`
+            );
         }
 
         const batchResults = await Promise.allSettled(
-            batch.map(({ spotName, city, country }) => lookupSingleSpot(spotName, city, country))
+            batch.map(({ spotName, city, country }) =>
+                lookupSingleSpot(spotName, city, country)
+            )
         );
 
         const batchPlaces = [];
         for (const result of batchResults) {
             completed++;
-            if (result.status === 'fulfilled' && result.value) {
+            if (result.status === "fulfilled" && result.value) {
                 const place = result.value;
                 if (!seenIds.has(place.id)) {
                     seenIds.add(place.id);
@@ -270,23 +375,24 @@ export async function lookupPlacesByLocations(locations, onProgress, onBatchRead
         // Pipeline: start R2 upload for this batch's photos immediately (don't wait)
         if (batchPlaces.length > 0) {
             r2UploadPromises.push(
-                uploadPlacePhotos(batchPlaces).catch(err =>
-                    console.warn('⚠️ Background R2 upload failed (video batch):', err.message)
+                uploadPlacePhotos(batchPlaces).catch((err) =>
+                    console.warn(
+                        "⚠️ Background R2 upload failed (video batch):",
+                        err.message
+                    )
                 )
             );
         }
 
         // Small delay between batches to avoid rate limiting
         if (i + BATCH_SIZE < allSpotTasks.length) {
-            await new Promise(r => setTimeout(r, 50));
+            await new Promise((r) => setTimeout(r, 50));
         }
     }
 
-    console.log(`✅ Found ${allPlaces.length}/${totalSpots} places via Places API`);
-
-    // R2 uploads are already running in background — no need to wait or re-trigger
+    console.log(
+        `✅ Found ${allPlaces.length}/${totalSpots} places via Places API (v1)`
+    );
 
     return allPlaces;
 }
-
-
