@@ -24,6 +24,23 @@ const TEXT_SEARCH_FIELD_MASK = [
     "places.googleMapsUri",
 ].join(",");
 
+// Detailed field mask for a single place lookup
+const PLACE_DETAIL_FIELD_MASK = [
+    "id",
+    "displayName",
+    "formattedAddress",
+    "rating",
+    "userRatingCount",
+    "location",
+    "photos",
+    "editorialSummary",
+    "types",
+    "primaryType",
+    "primaryTypeDisplayName",
+    "currentOpeningHours",
+].join(",");
+
+
 /**
  * Build a v1 photo URL from a photo resource name.
  * @param {string} photoName - e.g. "places/xxx/photos/yyy"
@@ -396,3 +413,35 @@ export async function lookupPlacesByLocations(
 
     return allPlaces;
 }
+
+/**
+ * Fetch full Google Place details (v1) for a given placeId.
+ * Used for backend enrichment when saving a spot.
+ *
+ * @param {string} placeId
+ * @returns {Promise<Object|null>}
+ */
+export async function fetchPlaceDetails(placeId) {
+    if (!placeId) return null;
+
+    try {
+        const url = `https://places.googleapis.com/v1/places/${placeId}`;
+        const response = await fetch(url, {
+            method: "GET",
+            headers: {
+                "X-Goog-Api-Key": config.googleMapsApiKey,
+                "X-Goog-FieldMask": PLACE_DETAIL_FIELD_MASK,
+            },
+        });
+
+        const r = await response.json();
+        if (!r.displayName) return null;
+
+        // Map to our internal shape
+        return mapPlace(r, "manual");
+    } catch (err) {
+        console.error(`❌ Error fetching place details for ${placeId}:`, err.message);
+        return null;
+    }
+}
+

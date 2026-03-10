@@ -1,5 +1,6 @@
 import Spot from "../models/Spot.js";
 import User from "../models/User.js";
+import { fetchPlaceDetails } from "../services/placesService.js";
 
 /**
  * POST /api/spots — Save spots (batch).
@@ -50,12 +51,40 @@ export const saveSpots = async (req, res, next) => {
             });
         }
 
-        const created = await Spot.insertMany(newSpots);
+        // Enrich spots that are missing crucial data (photo, coordinates, or rating)
+        // This is usually the case for manual saves where the frontend sends ONLY placeId.
+        const enrichedSpots = await Promise.all(newSpots.map(async (spot) => {
+            if (spot.placeId && (!spot.photoUrl || !spot.coordinates?.lat || spot.rating === null)) {
+                try {
+                    console.log(`[Enrichment] Fetching details for placeId: ${spot.placeId}`);
+                    const details = await fetchPlaceDetails(spot.placeId);
+                    if (details) {
+                        return {
+                            ...spot,
+                            photoUrl: spot.photoUrl || details.photoUrl,
+                            coordinates: spot.coordinates?.lat ? spot.coordinates : details.coordinates,
+                            rating: spot.rating || details.rating,
+                            userRatingCount: spot.userRatingCount || details.userRatingCount,
+                            address: spot.address || details.address,
+                            // Ensure city/country are set if missing
+                            city: (spot.city === "Unknown") ? details.city : spot.city,
+                            country: (spot.country === "Unknown") ? details.country : spot.country,
+                        };
+                    }
+                } catch (err) {
+                    console.error(`[Enrichment] Failed to enrich spot ${spot.placeId}:`, err.message);
+                }
+            }
+            return spot;
+        }));
+
+        const created = await Spot.insertMany(enrichedSpots);
 
         // Add spot references to user
         await User.findByIdAndUpdate(userId, {
             $push: { spots: { $each: created.map(s => s._id) } },
         });
+
 
         res.status(201).json({
             success: true,
