@@ -72,6 +72,50 @@ export const getTrip = async (req, res, next) => {
     }
 };
 
+// PATCH /api/trips/:tripID — Update a trip (itinerary, etc.)
+export const updateTrip = async (req, res, next) => {
+    try {
+        console.log(`[updateTrip] Called for trip ID: ${req.params.tripID}`);
+        const { tripID } = req.params;
+        const { itinerary, discoveredPlaces } = req.body;
+
+        const updateData = {};
+        if (itinerary) updateData.itinerary = itinerary;
+        if (discoveredPlaces) updateData.discoveredPlaces = discoveredPlaces;
+
+        // Optionally recalculate the tripRepPic if discoveredPlaces changed
+        if (discoveredPlaces && Array.isArray(discoveredPlaces) && discoveredPlaces.length > 0) {
+            const withPhotos = discoveredPlaces
+                .filter(p => p.photoUrl && p.rating && p.userRatingCount)
+                .sort((a, b) => {
+                    const scoreA = a.rating * Math.log10(a.userRatingCount || 1);
+                    const scoreB = b.rating * Math.log10(b.userRatingCount || 1);
+                    return scoreB - scoreA;
+                });
+            if (withPhotos.length > 0) {
+                updateData.tripRepPic = withPhotos[0].photoUrl;
+            }
+        }
+
+        const updatedTrip = await Trip.findByIdAndUpdate(
+            tripID,
+            { $set: updateData },
+            { new: true, runValidators: true }
+        );
+
+        if (!updatedTrip) {
+            console.log(`[updateTrip] Trip not found: ${tripID}`);
+            return res.status(404).json({ error: "Trip not found" });
+        }
+
+        console.log(`[updateTrip] Successfully updated trip: ${tripID}`);
+        res.status(200).json({ success: true, trip: updatedTrip });
+    } catch (err) {
+        console.error(`[updateTrip] Error updating trip:`, err);
+        next(err);
+    }
+};
+
 // DELETE /api/trips/:tripID — Delete a trip
 export const deleteTrip = async (req, res, next) => {
     try {
