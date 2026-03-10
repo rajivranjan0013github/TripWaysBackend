@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { saveTrip, getUserTrips, getTrip, deleteTrip } from "../controllers/savedTripController.js";
+import { saveTrip, getUserTrips, getTrip, deleteTrip, updateTrip } from "../controllers/savedTripController.js";
 
 const router = Router();
 
@@ -11,6 +11,9 @@ router.get("/user/:userID", getUserTrips);
 
 // GET /api/trips/:tripID — Get full trip detail
 router.get("/:tripID", getTrip);
+
+// PATCH /api/trips/:tripID — Update a trip (itinerary, etc.)
+router.patch("/:tripID", updateTrip);
 
 // DELETE /api/trips/:tripID — Delete a trip
 router.delete("/:tripID", deleteTrip);
