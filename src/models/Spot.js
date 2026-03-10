@@ -46,7 +46,7 @@ const SpotSchema = new mongoose.Schema(
         },
         source: {
             type: String,
-            enum: ["video", "manual", "trip"],
+            enum: ["video", "manual", "trip", "share_extension"],
             default: "manual",
         },
     },
