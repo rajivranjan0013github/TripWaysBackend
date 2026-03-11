@@ -35,9 +35,9 @@ const PLACE_DETAIL_FIELD_MASK = [
     "photos",
     "editorialSummary",
     "types",
-    "primaryType",
     "primaryTypeDisplayName",
     "currentOpeningHours",
+    "addressComponents",
 ].join(",");
 
 
@@ -60,7 +60,7 @@ function mapPlace(p, interest, extraFields = {}) {
             ? buildPhotoUrl(p.photos[0].name, 400)
             : null;
 
-    return {
+    const mapped = {
         id: p.id,
         name: p.displayName?.text || "Unknown",
         address: p.formattedAddress || "",
@@ -78,6 +78,18 @@ function mapPlace(p, interest, extraFields = {}) {
         interest,
         ...extraFields,
     };
+
+    // If addressComponents are present, extract city and country
+    if (p.addressComponents) {
+        const addr = p.addressComponents;
+        const countryComp = addr.find(c => c.types.includes("country"));
+        const cityComp = addr.find(c => c.types.includes("locality") || c.types.includes("administrative_area_level_1"));
+
+        if (countryComp) mapped.country = countryComp.longText;
+        if (cityComp) mapped.city = cityComp.longText;
+    }
+
+    return mapped;
 }
 
 /**
@@ -435,7 +447,13 @@ export async function fetchPlaceDetails(placeId) {
         });
 
         const r = await response.json();
-        if (!r.displayName) return null;
+        if (r.error) {
+            console.error(`[placesService] API Error:`, JSON.stringify(r.error, null, 2));
+        }
+        if (!r.displayName) {
+            console.warn(`[placesService] No displayName in response for ${placeId}`);
+            return null;
+        }
 
         // Map to our internal shape
         return mapPlace(r, "manual");

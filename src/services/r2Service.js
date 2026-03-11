@@ -136,9 +136,10 @@ export async function uploadPlacePhotos(places) {
 
     await Promise.allSettled(
         places.map(async (place) => {
-            if (!place.photoUrl || !place.id) return;
+            const placeId = place.id || place.placeId;
+            if (!place.photoUrl || !placeId) return;
 
-            const r2Url = await uploadPlacePhoto(place.photoUrl, place.id);
+            const r2Url = await uploadPlacePhoto(place.photoUrl, placeId);
             if (r2Url) {
                 place.photoUrl = r2Url;
             }

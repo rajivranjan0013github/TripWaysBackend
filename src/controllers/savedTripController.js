@@ -1,5 +1,6 @@
 import Trip from "../models/Trip.js";
 import User from "../models/User.js";
+import { syncTripPhotosToR2 } from "../services/photoSyncService.js";
 
 // POST /api/trips — Save a generated trip
 export const saveTrip = async (req, res, next) => {
@@ -39,6 +40,9 @@ export const saveTrip = async (req, res, next) => {
         await User.findByIdAndUpdate(userId, { $push: { trips: trip._id } });
 
         res.status(201).json({ success: true, trip });
+
+        // Fire-and-forget: Sync photos to R2 in the background
+        syncTripPhotosToR2(trip._id).catch(err => console.error("Background sync failed:", err));
     } catch (err) {
         next(err);
     }

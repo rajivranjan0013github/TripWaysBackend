@@ -8,6 +8,7 @@ import loginRoutes from "./routes/loginRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import savedTripRoutes from "./routes/savedTripRoutes.js";
 import spotRoutes from "./routes/spotRoutes.js";
+import templateTripRoutes from "./routes/templateTripRoutes.js";
 
 const app = express();
 
@@ -35,6 +36,7 @@ app.use("/api/login", loginRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/trips", savedTripRoutes);
 app.use("/api/spots", spotRoutes);
+app.use("/api/template-trips", templateTripRoutes);
 
 // Health check
 app.get("/", (req, res) => {
@@ -51,6 +53,7 @@ app.get("/", (req, res) => {
             users: "GET /api/users/:userID",
             trips: "GET /api/trips/user/:userID",
             spots: "GET /api/spots/user/:userID",
+            templateTrips: "GET /api/template-trips",
         },
     });
 });
