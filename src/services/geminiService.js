@@ -212,7 +212,6 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
     Respond with ONLY valid JSON in this exact structure:
     {
       "destination": "Extracted Destination Name",
-      "videoTranscript": "A detailed 2-3 paragraph breakdown of the spoken transcript or the visual events happening in the video.",
       "aiUnderstanding": "A 1-2 sentence summary of your understanding of this video's vibe and why these specific places are recommended.",
       "totalDays": ${days},
       "itinerary": [
@@ -235,7 +234,7 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
     console.log(`🤖 Prompting Gemini...`);
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-pro", // Pro model is much better at video extraction
+      model: "gemini-flash-latest", // Pro model is much better at video extraction
       contents: [
         videoPart,
         { text: prompt }
@@ -406,14 +405,13 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { })
           ]
         }
       ],
-      "videoTranscript": "A detailed 2-3 paragraph breakdown of the spoken transcript or the visual events happening in the video.",
       "aiUnderstanding": "A 1-2 sentence summary of the video's vibe and what kind of travel experience it showcases."
     }`;
 
     console.log(`🤖 Prompting Gemini to extract places...`);
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-flash-latest",
       contents: [
         videoPart,
         { text: prompt }

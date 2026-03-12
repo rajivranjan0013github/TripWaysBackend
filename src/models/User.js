@@ -40,6 +40,14 @@ const UserSchema = new mongoose.Schema(
                 ref: "Spot",
             },
         ],
+        fcmToken: {
+            type: String,
+            default: null,
+        },
+        notificationsEnabled: {
+            type: Boolean,
+            default: false,
+        },
     },
     { timestamps: true }
 );
