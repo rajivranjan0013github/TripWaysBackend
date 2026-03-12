@@ -22,6 +22,7 @@ const TEXT_SEARCH_FIELD_MASK = [
     "places.photos",
     "places.editorialSummary",
     "places.googleMapsUri",
+    "places.addressComponents",
 ].join(",");
 
 // Detailed field mask for a single place lookup
@@ -65,7 +66,7 @@ function mapPlace(p, interest, extraFields = {}) {
         name: p.displayName?.text || "Unknown",
         address: p.formattedAddress || "",
         rating: p.rating || null,
-        userRatingCount: p.userRatingCount || 0,
+        userRatingCount: p.userRatingCount ?? null,
         types: p.types || [],
         primaryType: p.primaryType || null,
         primaryTypeDisplayName: p.primaryTypeDisplayName?.text || null,
@@ -82,11 +83,15 @@ function mapPlace(p, interest, extraFields = {}) {
     // If addressComponents are present, extract city and country
     if (p.addressComponents) {
         const addr = p.addressComponents;
-        const countryComp = addr.find(c => c.types.includes("country"));
-        const cityComp = addr.find(c => c.types.includes("locality") || c.types.includes("administrative_area_level_1"));
+        const countryComp = addr.find(c => c.types?.includes("country"));
+        const cityComp = addr.find(c => c.types?.includes("locality") || c.types?.includes("administrative_area_level_1"));
 
         if (countryComp) mapped.country = countryComp.longText;
-        if (cityComp) mapped.city = cityComp.longText;
+        if (cityComp) {
+            mapped.city = cityComp.longText;
+        } else if (countryComp) {
+            mapped.city = countryComp.longText;
+        }
     }
 
     return mapped;
@@ -455,8 +460,39 @@ export async function fetchPlaceDetails(placeId) {
             return null;
         }
 
+        let targetPlace = r;
+
+        // If the place is an entire country or state, find its capital/major city
+        if (targetPlace.types && (targetPlace.types.includes("country") || targetPlace.types.includes("administrative_area_level_1") || targetPlace.types.includes("continent"))) {
+            const regionName = targetPlace.displayName?.text || targetPlace.formattedAddress;
+            console.log(`[placesService] Place ${placeId} is a broad region (${regionName}). Finding capital...`);
+            
+            try {
+                const capitalQuery = `capital of ${regionName}`;
+                const searchRes = await fetch(TEXT_SEARCH_URL, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-Goog-Api-Key": config.googleMapsApiKey,
+                        "X-Goog-FieldMask": TEXT_SEARCH_FIELD_MASK,
+                    },
+                    body: JSON.stringify({
+                        textQuery: capitalQuery,
+                        maxResultCount: 1,
+                    }),
+                });
+                const searchData = await searchRes.json();
+                if (searchData.places && searchData.places.length > 0) {
+                    targetPlace = searchData.places[0];
+                    console.log(`[placesService] Replaced broad region with capital: ${targetPlace.displayName?.text}`);
+                }
+            } catch (searchErr) {
+                console.warn(`[placesService] Failed to find capital for ${regionName}: ${searchErr.message}`);
+            }
+        }
+
         // Map to our internal shape
-        return mapPlace(r, "manual");
+        return mapPlace(targetPlace, "manual");
     } catch (err) {
         console.error(`❌ Error fetching place details for ${placeId}:`, err.message);
         return null;

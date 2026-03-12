@@ -34,7 +34,7 @@ const SpotSchema = new mongoose.Schema(
         },
         userRatingCount: {
             type: Number,
-            default: 0,
+            default: null,
         },
         photoUrl: {
             type: String,
@@ -46,7 +46,7 @@ const SpotSchema = new mongoose.Schema(
         },
         source: {
             type: String,
-            enum: ["video", "manual", "trip", "share_extension"],
+            enum: ["video", "manual", "trip", "share_extension", "discovery"],
             default: "manual",
         },
     },

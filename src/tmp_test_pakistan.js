@@ -1,0 +1,29 @@
+import 'dotenv/config';
+import { fetchPlaceDetails } from "./services/placesService.js";
+
+async function test() {
+    // ChIJm86q88oEzjkRw1n5E1o3vX0 is Pakistan or similar, let's search it first to get an ID
+    const TEXT_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText";
+    const response = await fetch(TEXT_SEARCH_URL, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": process.env.GOOGLE_MAPS_API_KEY,
+            "X-Goog-FieldMask": "places.id",
+        },
+        body: JSON.stringify({
+            textQuery: "Pakistan",
+            maxResultCount: 1,
+        }),
+    });
+    const data = await response.json();
+    if (data.places && data.places.length > 0) {
+        const placeId = data.places[0].id;
+        console.log(`Testing with place ID: ${placeId}`);
+        const result = await fetchPlaceDetails(placeId);
+        console.log("Mapped Result:", JSON.stringify(result, null, 2));
+    } else {
+        console.log("Could not find Pakistan");
+    }
+}
+test();

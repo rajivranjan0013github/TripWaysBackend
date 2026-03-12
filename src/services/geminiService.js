@@ -405,19 +405,21 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { })
           ]
         }
       ],
-      "aiUnderstanding": "A 1-2 sentence summary of the video's vibe and what kind of travel experience it showcases."
     }`;
 
     console.log(`🤖 Prompting Gemini to extract places...`);
 
     const response = await ai.models.generateContent({
-      model: "gemini-flash-latest",
+      model: "gemini-3.1-flash-lite-preview",
       contents: [
         videoPart,
         { text: prompt }
       ],
       config: {
         responseMimeType: "application/json",
+        thinkingConfig:{
+          thinkingBudget:0
+        }
       },
     });
 
