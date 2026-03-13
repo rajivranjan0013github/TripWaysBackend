@@ -48,6 +48,22 @@ const UserSchema = new mongoose.Schema(
             type: Boolean,
             default: false,
         },
+        isPremium: {
+            type: Boolean,
+            default: false,
+        },
+        premiumPlan: {
+            type: String,
+            default: null,
+        },
+        premiumExpiresAt: {
+            type: Date,
+            default: null,
+        },
+        rcOriginalAppUserId: {
+            type: String,
+            default: null,
+        },
     },
     { timestamps: true }
 );
