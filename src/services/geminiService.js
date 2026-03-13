@@ -75,6 +75,9 @@ Respond with ONLY valid JSON in this exact structure:
     contents: prompt,
     config: {
       responseMimeType: "application/json",
+      thinkingConfig:{
+        thinkingBudget:0
+      }
     },
   });
 

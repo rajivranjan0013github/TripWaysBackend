@@ -174,7 +174,7 @@ export const getUserSpots = async (req, res, next) => {
     try {
         const { userID } = req.params;
         const spots = await Spot.find({ userId: userID })
-            .sort({ country: 1, city: 1, name: 1 })
+            .sort({ updatedAt: -1 })
             .lean();
 
         // Group by country → city, with a representative city photo

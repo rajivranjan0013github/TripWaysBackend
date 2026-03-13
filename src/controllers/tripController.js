@@ -4,6 +4,29 @@ import { getRoutesForItinerary } from "../services/routingService.js";
 import { discoverPlaces as discoverPlacesService, lookupPlacesByLocations } from "../services/placesService.js";
 
 /**
+ * Helper to enrich candidate places with discovery results if needed.
+ */
+async function enrichCandidatePlaces(place, days, interests, currentPlaces) {
+    const minRequired = Math.min(days * 4, 30); // Aim for at least 4-5 spots per day
+    if (currentPlaces.length >= minRequired && currentPlaces.length > 5) return currentPlaces;
+
+    console.log(`🔍 [Enrichment] Only ${currentPlaces.length} spots for ${days} days. Fetching more...`);
+    
+    try {
+        const interestsTouse = interests.length > 0 ? interests : ["popular"];
+        const discovered = await discoverPlacesService(place, interestsTouse, days);
+        const seenIds = new Set(currentPlaces.map(p => p.id || p.placeId));
+        const newPlaces = discovered.filter(p => !seenIds.has(p.id));
+        
+        console.log(`✅ [Enrichment] Added ${newPlaces.length} new spots from Places API.`);
+        return [...currentPlaces, ...newPlaces];
+    } catch (err) {
+        console.warn("⚠️ [Enrichment] Failed to fetch supplementary places:", err.message);
+        return currentPlaces;
+    }
+}
+
+/**
  * Main trip planning controller.
  * Orchestrates: Input Validation → Gemini → Geocoding → Routing → Response
  */
@@ -41,16 +64,19 @@ export async function planTrip(req, res) {
         }
         console.log(`${"═".repeat(50)}\n`);
 
-        // ── Step 2: Generate Day-Wise Plan via Gemini ───────────
-        const plan = await generateDayWisePlan(place.trim(), days, validInterests, validDiscoveredPlaces);
+        // ── Step 2: Enrich Candidate Places ─────────────────────
+        const enrichedPlaces = await enrichCandidatePlaces(place.trim(), days, validInterests, validDiscoveredPlaces);
 
-        // ── Step 3: Geocode All Places ──────────────────────────
+        // ── Step 3: Generate Day-Wise Plan via Gemini ───────────
+        const plan = await generateDayWisePlan(place.trim(), days, validInterests, enrichedPlaces);
+
+        // ── Step 4: Geocode All Places ──────────────────────────
         const geocodedPlan = await geocodeItinerary(plan);
 
-        // ── Step 4: Get Routes for Each Day ─────────────────────
+        // ── Step 5: Get Routes for Each Day ─────────────────────
         const routedPlan = await getRoutesForItinerary(geocodedPlan);
 
-        // ── Step 5: Return Final Response ───────────────────────
+        // ── Step 6: Return Final Response ───────────────────────
         const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
         console.log(`\n✨ Trip planned in ${elapsedSeconds}s\n`);
 
@@ -115,8 +141,11 @@ export async function planTripStream(req, res) {
         }
         console.log(`${"═".repeat(50)}\n`);
 
-        // ── Step 2: Generate Day-Wise Plan via Gemini ───────────
-        const plan = await generateDayWisePlan(place.trim(), days, validInterests, validDiscoveredPlaces);
+        // ── Step 2: Enrich Candidate Places ─────────────────────
+        const enrichedPlaces = await enrichCandidatePlaces(place.trim(), days, validInterests, validDiscoveredPlaces);
+
+        // ── Step 3: Generate Day-Wise Plan via Gemini ───────────
+        const plan = await generateDayWisePlan(place.trim(), days, validInterests, enrichedPlaces);
 
         // ** STREAM EVENT 1: Basic Itinerary (Text only, feeling of speed!)
         sendEvent("itinerary", {
@@ -125,7 +154,7 @@ export async function planTripStream(req, res) {
             itinerary: plan.itinerary
         });
 
-        // ── Step 3: Geocode All Places ──────────────────────────
+        // ── Step 4: Geocode All Places ──────────────────────────
         const geocodedPlan = await geocodeItinerary(plan);
 
         // ** STREAM EVENT 2: Geocoded Itinerary (Map pins appear!)
@@ -133,7 +162,7 @@ export async function planTripStream(req, res) {
             itinerary: geocodedPlan.itinerary
         });
 
-        // ── Step 4: Get Routes for Each Day ─────────────────────
+        // ── Step 5: Get Routes for Each Day ─────────────────────
         const routedPlan = await getRoutesForItinerary(geocodedPlan);
 
         const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
