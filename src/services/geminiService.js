@@ -68,7 +68,6 @@ Respond with ONLY valid JSON in this exact structure:
   ]
 }`;
 
-  console.log("🤖 Calling Gemini for day-wise itinerary...");
 
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
@@ -91,9 +90,7 @@ Respond with ONLY valid JSON in this exact structure:
       throw new Error("Gemini response missing 'itinerary' array");
     }
 
-    console.log(
-      `✅ Gemini generated ${plan.itinerary.length}-day plan with ${plan.itinerary.reduce((sum, day) => sum + day.places.length, 0)} total places`
-    );
+  
 
     return plan;
   } catch (parseError) {
@@ -132,7 +129,6 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
     const fileSizeMB = (fileSizeBytes / (1024 * 1024)).toFixed(1);
     const useInline = fileSizeBytes <= INLINE_SIZE_LIMIT;
 
-    console.log(`📦 Video file size: ${fileSizeMB}MB → using ${useInline ? 'INLINE base64 (fast path)' : 'File Upload API (large file fallback)'}`);
 
     let videoPart;
 
@@ -150,19 +146,16 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
       };
       timings.upload = "skipped";
       timings.processing = "skipped";
-      console.log(`⚡ Inline base64 ready (${fileSizeMB}MB). Upload + processing SKIPPED.`);
     } else {
       // 🐌 FALLBACK: Large file → use File Upload API + poll for processing
       onProgress("Uploading video to AI for analysis...");
       phaseStart = Date.now();
-      console.log(`☁️ Uploading local file to Gemini: ${localVideoPath}`);
       uploadResult = await ai.files.upload({
         file: localVideoPath,
         mimeType: "video/mp4"
       });
       timings.upload = ((Date.now() - phaseStart) / 1000).toFixed(1);
 
-      console.log(`☁️ Uploaded as: ${uploadResult.name}. Current state: ${uploadResult.state}. ⏱️ Upload: ${timings.upload}s`);
 
       // Wait for PROCESSING to finish
       onProgress("Processing video chunks (this takes a few seconds)...");
@@ -170,7 +163,6 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
       let fileState = uploadResult.state;
       let pollDelay = 1500;
       while (fileState === 'PROCESSING') {
-        console.log('⏳ Waiting for video to finish processing on Gemini...');
         await new Promise((resolve) => setTimeout(resolve, pollDelay));
         pollDelay = Math.min(pollDelay * 1.5, 5000);
         const checkResult = await ai.files.get({ name: uploadResult.name });
@@ -181,7 +173,6 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
       }
 
       timings.processing = ((Date.now() - phaseStart) / 1000).toFixed(1);
-      console.log(`✅ Video is ${fileState}. ⏱️ Processing wait: ${timings.processing}s`);
 
       videoPart = {
         fileData: {
@@ -234,7 +225,6 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
       ]
     }`;
 
-    console.log(`🤖 Prompting Gemini...`);
 
     const response = await ai.models.generateContent({
       model: "gemini-flash-latest", // Pro model is much better at video extraction
@@ -257,16 +247,7 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
     timings.geminiInference = ((Date.now() - phaseStart) / 1000).toFixed(1);
     timings.total = ((Date.now() - totalStart) / 1000).toFixed(1);
 
-    console.log(`\n📊 ═══ generatePlanFromVideo TIMING BREAKDOWN ═══`);
-    console.log(`   📥 Video Download:      ${timings.download}s`);
-    console.log(`   ☁️  Gemini Upload:       ${timings.upload}s`);
-    console.log(`   ⏳ Processing Wait:      ${timings.processing}s`);
-    console.log(`   🤖 Gemini Inference:     ${timings.geminiInference}s`);
-    console.log(`   ⏱️  TOTAL:               ${timings.total}s`);
-    console.log(`   📦 Mode:                ${useInline ? 'INLINE base64 ⚡' : 'File Upload API'}`);
-    console.log(`═══════════════════════════════════════════════════\n`);
-
-    console.log(`✅ Gemini generated ${plan.itinerary.length}-day plan for ${plan.destination}`);
+   
     return plan;
 
   } catch (error) {
@@ -280,7 +261,6 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
     if (uploadResult && uploadResult.name) {
       try {
         await ai.files.delete({ name: uploadResult.name });
-        console.log(`🗑️ Deleted Gemini storage file: ${uploadResult.name}`);
       } catch (e) { console.error("Could not delete Gemini file", e); }
     }
   }
@@ -315,7 +295,6 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { })
     const fileSizeMB = (fileSizeBytes / (1024 * 1024)).toFixed(1);
     const useInline = fileSizeBytes <= INLINE_SIZE_LIMIT;
 
-    console.log(`📦 Video file size: ${fileSizeMB}MB → using ${useInline ? 'INLINE base64 (fast path)' : 'File Upload API (large file fallback)'}`);
 
     let videoPart;
 
@@ -333,19 +312,16 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { })
       };
       timings.upload = "skipped";
       timings.processing = "skipped";
-      console.log(`⚡ Inline base64 ready (${fileSizeMB}MB). Upload + processing SKIPPED.`);
     } else {
       // 🐌 FALLBACK: Large file → use File Upload API + poll for processing
       onProgress("Uploading video to AI for analysis...");
       phaseStart = Date.now();
-      console.log(`☁️ Uploading local file to Gemini: ${localVideoPath}`);
       uploadResult = await ai.files.upload({
         file: localVideoPath,
         mimeType: "video/mp4"
       });
       timings.upload = ((Date.now() - phaseStart) / 1000).toFixed(1);
 
-      console.log(`☁️ Uploaded as: ${uploadResult.name}. Current state: ${uploadResult.state}. ⏱️ Upload: ${timings.upload}s`);
 
       // Wait for PROCESSING to finish
       onProgress("Processing video chunks (this takes a few seconds)...");
@@ -353,7 +329,6 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { })
       let fileState = uploadResult.state;
       let pollDelay = 1500;
       while (fileState === 'PROCESSING') {
-        console.log('⏳ Waiting for video to finish processing on Gemini...');
         await new Promise((resolve) => setTimeout(resolve, pollDelay));
         pollDelay = Math.min(pollDelay * 1.5, 5000);
         const checkResult = await ai.files.get({ name: uploadResult.name });
@@ -364,7 +339,6 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { })
       }
 
       timings.processing = ((Date.now() - phaseStart) / 1000).toFixed(1);
-      console.log(`✅ Video is ${fileState}. ⏱️ Processing wait: ${timings.processing}s`);
 
       videoPart = {
         fileData: {
@@ -410,7 +384,6 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { })
       ],
     }`;
 
-    console.log(`🤖 Prompting Gemini to extract places...`);
 
     const response = await ai.models.generateContent({
       model: "gemini-3.1-flash-lite-preview",
@@ -437,16 +410,7 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { })
     timings.geminiInference = ((Date.now() - phaseStart) / 1000).toFixed(1);
     timings.total = ((Date.now() - totalStart) / 1000).toFixed(1);
 
-    console.log(`\n📊 ═══ extractPlacesFromVideoAI TIMING BREAKDOWN ═══`);
-    console.log(`   📥 Video Download:      ${timings.download}s`);
-    console.log(`   ☁️  Gemini Upload:       ${timings.upload}s`);
-    console.log(`   ⏳ Processing Wait:      ${timings.processing}s`);
-    console.log(`   🤖 Gemini Inference:     ${timings.geminiInference}s`);
-    console.log(`   ⏱️  TOTAL:               ${timings.total}s`);
-    console.log(`   📦 Mode:                ${useInline ? 'INLINE base64 ⚡' : 'File Upload API'}`);
-    console.log(`═══════════════════════════════════════════════════\n`);
-
-    console.log(`✅ Gemini extracted ${totalSpots} places across ${result.locations.length} location(s)`);
+   
     return result;
 
   } catch (error) {
@@ -459,7 +423,6 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { })
     if (uploadResult && uploadResult.name) {
       try {
         await ai.files.delete({ name: uploadResult.name });
-        console.log(`🗑️ Deleted Gemini storage file: ${uploadResult.name}`);
       } catch (e) { console.error("Could not delete Gemini file", e); }
     }
   }

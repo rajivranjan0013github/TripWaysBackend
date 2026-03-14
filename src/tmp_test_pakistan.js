@@ -19,11 +19,8 @@ async function test() {
     const data = await response.json();
     if (data.places && data.places.length > 0) {
         const placeId = data.places[0].id;
-        console.log(`Testing with place ID: ${placeId}`);
         const result = await fetchPlaceDetails(placeId);
-        console.log("Mapped Result:", JSON.stringify(result, null, 2));
     } else {
-        console.log("Could not find Pakistan");
     }
 }
 test();

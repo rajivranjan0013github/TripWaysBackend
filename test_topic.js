@@ -9,7 +9,6 @@ async function testTopicPush() {
         body: 'This is a topic test message'
       }
     });
-    console.log("Topic push succeeded:", response);
   } catch (error) {
     console.error("Topic push failed:", error);
   }

@@ -84,13 +84,11 @@ export const handleRevenueCatWebhook = async (req, res) => {
                     // Let's leave expiresAt as null to signify "forever"
                 }
 
-                console.log(`[RevenueCat] Granted Premium to user ${user._id}. Expires: ${expiresAt}`);
                 break;
 
             case 'CANCELLATION':
                 // A cancellation means auto-renew is off, but they still have access until expiration.
                 // We don't remove premium status yet, RevenueCat will send an EXPIRATION event when the time comes.
-                console.log(`[RevenueCat] User ${user._id} cancelled auto-renew for ${product_id}.`);
                 break;
 
             case 'EXPIRATION':
@@ -99,15 +97,12 @@ export const handleRevenueCatWebhook = async (req, res) => {
                 user.isPremium = false;
                 user.premiumPlan = null;
                 user.premiumExpiresAt = null;
-                console.log(`[RevenueCat] Revoked Premium for user ${user._id} due to ${type}.`);
                 break;
                 
             case 'TEST':
-                console.log(`[RevenueCat] Test event received successfully.`);
                 break;
 
             default:
-                console.log(`[RevenueCat] Unhandled event type: ${type}`);
                 break;
         }
 

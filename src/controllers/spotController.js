@@ -109,7 +109,6 @@ export const saveSpots = async (req, res, next) => {
                     // If it was already manually enriched, just upload the photo to R2
                     if (isManualSave) {
                         if (spot.photoUrl && !spot.photoUrl.includes('r2.')) {
-                            console.log(`[saveSpots] Uploading enriched photo to R2 for ${spot.placeId}...`);
                             const tempSpot = [{ placeId: spot.placeId, photoUrl: spot.photoUrl }];
                             await uploadPlacePhotos(tempSpot);
                             await Spot.findByIdAndUpdate(spot._id, { photoUrl: tempSpot[0].photoUrl });
@@ -156,7 +155,6 @@ export const saveSpots = async (req, res, next) => {
                     }
 
                     await Spot.findByIdAndUpdate(spot._id, updateFields);
-                    console.log(`[saveSpots] Background enrichment complete for ${spot.placeId}`);
                 } catch (err) {
                     console.error(`[saveSpots] Background task failed for ${spot.placeId}:`, err.message);
                 }

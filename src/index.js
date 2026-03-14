@@ -26,7 +26,6 @@ app.use(express.json({ limit: "50mb" }));
 mongoose
     .connect(process.env.MONGODB_URI)
     .then(() => {
-        console.log("✅ Connected to MongoDB");
     })
     .catch((err) => {
         console.error("❌ MongoDB connection error:", err.message);
@@ -67,9 +66,7 @@ app.use(errorHandler);
 
 // Start server
 app.listen(config.port, () => {
-    console.log(`\n🚀 Travel Backend running on http://localhost:${config.port}`);
-    console.log(`📍 Plan a trip: POST http://localhost:${config.port}/api/plan`);
-
+   
     // Pre-warm Gemini connection (avoids cold-start TCP/TLS overhead on first request)
     import("@google/genai").then(({ GoogleGenAI }) => {
         const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
@@ -78,7 +75,6 @@ app.listen(config.port, () => {
             contents: "hi",
             config: { maxOutputTokens: 5 },
         }).then(() => {
-            console.log("✅ Gemini connection pre-warmed");
         }).catch(() => {
             // Silently fail — not critical
         });

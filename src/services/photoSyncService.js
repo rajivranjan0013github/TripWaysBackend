@@ -18,7 +18,6 @@ export async function syncTripPhotosToR2(tripId) {
     if (!tripId) return;
 
     try {
-        console.log(`\n⏳ [Sync Worker] Starting background photo sync for Trip ${tripId}...`);
         
         // 1. Fetch the trip directly from DB
         const trip = await Trip.findById(tripId);
@@ -36,7 +35,6 @@ export async function syncTripPhotosToR2(tripId) {
             );
             
             if (placesWithGoogleUrls.length > 0) {
-                console.log(`[Sync Worker] Found ${placesWithGoogleUrls.length} Google URLs in discoveredPlaces. Syncing...`);
                 // This will upload and mutate `photoUrl` in-place
                 await uploadPlacePhotos(placesWithGoogleUrls);
                 needsUpdate = true;
@@ -57,7 +55,6 @@ export async function syncTripPhotosToR2(tripId) {
             });
 
             if (itineraryPlaces.length > 0) {
-                console.log(`[Sync Worker] Found ${itineraryPlaces.length} Google URLs in itinerary. Syncing...`);
                 await uploadPlacePhotos(itineraryPlaces);
                 needsUpdate = true;
             }
@@ -86,9 +83,7 @@ export async function syncTripPhotosToR2(tripId) {
                     }
                 }
             );
-            console.log(`✅ [Sync Worker] Successfully patched Trip ${tripId} with permanent Cloudflare R2 URLs.`);
         } else {
-            console.log(`✅ [Sync Worker] Trip ${tripId} is already fully synced (no Google URLs found).`);
         }
 
     } catch (err) {

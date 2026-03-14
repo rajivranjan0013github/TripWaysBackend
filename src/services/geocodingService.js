@@ -57,7 +57,6 @@ async function geocodePlace(placeName, destination) {
 }
 
 export async function geocodeItinerary(plan) {
-    console.log("🗺️  Geocoding all places concurrently...");
 
     const destination = plan.destination;
 
@@ -97,7 +96,6 @@ export async function geocodeItinerary(plan) {
         0
     );
 
-    console.log(`✅ Geocoded ${geocodedPlaces}/${totalPlaces} places`);
 
     return plan;
 }

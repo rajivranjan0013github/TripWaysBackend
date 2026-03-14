@@ -34,7 +34,6 @@ async function testFcmRaw() {
       }
     };
 
-    console.log("Sending to FCM...");
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -45,8 +44,7 @@ async function testFcmRaw() {
     });
 
     const data = await response.json();
-    console.log("FCM Response Status:", response.status);
-    console.log("FCM Response Data:", JSON.stringify(data, null, 2));
+ 
 
   } catch (error) {
     console.error("Error:", error);
