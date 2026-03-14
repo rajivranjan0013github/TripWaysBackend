@@ -1,10 +1,15 @@
 import dotenv from "dotenv";
-dotenv.config();
+import { fileURLToPath } from "url";
+import path from "path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
 const config = {
   geminiApiKey: process.env.GEMINI_API_KEY,
   googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY,
-  port: process.env.PORT || 3000,
+  port: process.env.PORT || 3001,
 };
 
 // Validate required keys on startup
