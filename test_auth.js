@@ -15,13 +15,9 @@ async function testAuth() {
       scopes: ['https://www.googleapis.com/auth/cloud-platform', 'https://www.googleapis.com/auth/firebase.messaging'],
     });
 
-    console.log("Getting client...");
     const client = await auth.getClient();
-    console.log("Getting token...");
     const token = await client.getAccessToken();
-    console.log("Token received successfully!");
     // substring for safety
-    console.log("Token: ", token.token ? token.token.substring(0, 10) + "..." : null);
   } catch (error) {
     console.error("Auth error details:");
     console.error(error);

@@ -18,7 +18,6 @@ async function sendNotification() {
 
   try {
     const resp = await admin.messaging().send(message);
-    console.log("Successfully sent notification:", resp);
   } catch (err) {
     console.error("Error sending notification:", err);
   }

@@ -35,7 +35,6 @@ function getClient() {
             secretAccessKey: cfg.secretAccessKey,
         },
     });
-    console.log("✅ Cloudflare R2 client initialized");
     return _s3Client;
 }
 
@@ -112,7 +111,6 @@ export async function uploadPlacePhoto(googlePhotoUrl, placeId) {
 
         const publicUrl = `${cfg.publicUrl}/${key}`;
         _r2UrlCache.set(placeId, publicUrl);
-        console.log(`📸 Uploaded photo for ${placeId} → ${publicUrl}`);
         return publicUrl;
     } catch (err) {
         console.warn(`⚠️  R2 upload failed for ${placeId}:`, err.message);
@@ -132,7 +130,6 @@ export async function uploadPlacePhotos(places) {
     const client = getClient();
     if (!client || !Array.isArray(places) || places.length === 0) return places;
 
-    console.log(`📸 Uploading ${places.filter(p => p.photoUrl).length} place photos to R2...`);
 
     await Promise.allSettled(
         places.map(async (place) => {
@@ -146,6 +143,5 @@ export async function uploadPlacePhotos(places) {
         })
     );
 
-    console.log(`📸 Photo upload complete`);
     return places;
 }

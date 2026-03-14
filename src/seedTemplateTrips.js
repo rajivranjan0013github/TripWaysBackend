@@ -628,22 +628,15 @@ import { lookupPlacesByLocations } from "./services/placesService.js";
 
 async function seed() {
     try {
-        console.log("🔗 Connecting to MongoDB...");
         await mongoose.connect(process.env.MONGODB_URI);
-        console.log("✅ Connected to MongoDB");
 
         // Clear existing template trips
         const deleted = await TemplateTrip.deleteMany({});
-        console.log(`🗑️  Cleared ${deleted.deletedCount} existing template trip(s)`);
 
-        console.log("📸 Generating images and routes for template trips...");
         // Generate images and routes for all template trips
         for (let i = 0; i < TEMPLATE_TRIPS.length; i++) {
             const trip = TEMPLATE_TRIPS[i];
-            console.log(`\n===========================================`);
-            console.log(`⏳ Processing: ${trip.title} (${i + 1}/${TEMPLATE_TRIPS.length})`);
-            console.log(`===========================================`);
-
+          
             // Extract country and city from destination (e.g., "Rome, Italy" -> City: "Rome", Country: "Italy")
             const destParts = trip.destination.split(",").map(p => p.trim());
             const city = destParts[0];
@@ -664,15 +657,13 @@ async function seed() {
                 spots: allSpots
             }];
 
-            console.log(`\n📸 Fetching photos for ${allSpots.length} places...`);
             // Fetch places to get images (and triggers background R2 upload)
             const resolvedPlaces = await lookupPlacesByLocations(
                 locations,
-                (msg) => console.log(`   ${msg}`) // progress callback
+                (msg) => {} // progress callback
             );
 
             // Wait for R2 photos to actually finish uploading so the template trips get permanent URLs!
-            console.log(`\n☁️ Waiting for R2 uploads to complete for permanent URLs...`);
             await uploadPlacePhotos(resolvedPlaces);
 
             // Create a lookup map for fast matching: spotName -> photoUrl and full Place
@@ -701,9 +692,7 @@ async function seed() {
                     }
                 });
             });
-            console.log(`✅ Attached photos to ${addedPhotos}/${allSpots.length} places`);
-
-            console.log(`\n🚗 Fetching routes...`);
+           
             // Adapt the trip itinerary to the format expected by getRoutesForItinerary
             const planToRoute = {
                 destination: trip.destination,
@@ -716,17 +705,13 @@ async function seed() {
             // Re-assign the routed itinerary back to the template trip
             TEMPLATE_TRIPS[i].itinerary = routedPlan.itinerary;
         }
-        console.log("\n✅ Finished generating images and routes for all template trips.");
 
         // Insert new template trips
         const inserted = await TemplateTrip.insertMany(TEMPLATE_TRIPS);
-        console.log(`✅ Inserted ${inserted.length} template trip(s):`);
         inserted.forEach((t) => {
-            console.log(`   • ${t.title} (${t._id})`);
         });
 
         await mongoose.disconnect();
-        console.log("🔌 Disconnected from MongoDB");
         process.exit(0);
     } catch (err) {
         console.error("❌ Seed failed:", err.message);

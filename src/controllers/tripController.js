@@ -10,7 +10,6 @@ async function enrichCandidatePlaces(place, days, interests, currentPlaces) {
     const minRequired = Math.min(days * 4, 30); // Aim for at least 4-5 spots per day
     if (currentPlaces.length >= minRequired && currentPlaces.length > 5) return currentPlaces;
 
-    console.log(`🔍 [Enrichment] Only ${currentPlaces.length} spots for ${days} days. Fetching more...`);
     
     try {
         const interestsTouse = interests.length > 0 ? interests : ["popular"];
@@ -18,7 +17,6 @@ async function enrichCandidatePlaces(place, days, interests, currentPlaces) {
         const seenIds = new Set(currentPlaces.map(p => p.id || p.placeId));
         const newPlaces = discovered.filter(p => !seenIds.has(p.id));
         
-        console.log(`✅ [Enrichment] Added ${newPlaces.length} new spots from Places API.`);
         return [...currentPlaces, ...newPlaces];
     } catch (err) {
         console.warn("⚠️ [Enrichment] Failed to fetch supplementary places:", err.message);
@@ -54,15 +52,11 @@ export async function planTrip(req, res) {
         const validInterests = Array.isArray(interests) ? interests : [];
         const validDiscoveredPlaces = Array.isArray(discoveredPlaces) ? discoveredPlaces : [];
 
-        console.log(`\n${"═".repeat(50)}`);
-        console.log(`📍 Planning trip to "${place}" for ${days} day(s)`);
+   
         if (validInterests.length > 0) {
-            console.log(`🎯 Interests: ${validInterests.join(", ")}`);
         }
         if (validDiscoveredPlaces.length > 0) {
-            console.log(`📌 Pre-discovered places provided: ${validDiscoveredPlaces.length}`);
         }
-        console.log(`${"═".repeat(50)}\n`);
 
         // ── Step 2: Enrich Candidate Places ─────────────────────
         const enrichedPlaces = await enrichCandidatePlaces(place.trim(), days, validInterests, validDiscoveredPlaces);
@@ -78,7 +72,6 @@ export async function planTrip(req, res) {
 
         // ── Step 6: Return Final Response ───────────────────────
         const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.log(`\n✨ Trip planned in ${elapsedSeconds}s\n`);
 
         return res.json({
             success: true,
@@ -134,12 +127,9 @@ export async function planTripStream(req, res) {
         const validDiscoveredPlaces = Array.isArray(discoveredPlaces) ? discoveredPlaces : [];
 
 
-        console.log(`\n${"═".repeat(50)}`);
-        console.log(`📍 Streaming trip pattern to "${place}" for ${days} day(s)`);
+     
         if (validDiscoveredPlaces.length > 0) {
-            console.log(`📌 Pre-discovered places provided: ${validDiscoveredPlaces.length}`);
         }
-        console.log(`${"═".repeat(50)}\n`);
 
         // ── Step 2: Enrich Candidate Places ─────────────────────
         const enrichedPlaces = await enrichCandidatePlaces(place.trim(), days, validInterests, validDiscoveredPlaces);
@@ -166,7 +156,6 @@ export async function planTripStream(req, res) {
         const routedPlan = await getRoutesForItinerary(geocodedPlan);
 
         const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.log(`\n✨ Stream finished in ${elapsedSeconds}s\n`);
 
         // ** STREAM EVENT 3: Routed Itinerary (Lines appear, final status)
         sendEvent("routed", {
@@ -212,10 +201,7 @@ export async function extractVideoPlaces(req, res) {
             return res.end();
         }
 
-        console.log(`\n${"═".repeat(50)}`);
-        console.log(`🎬 Extracting places from VIDEO URL`);
-        console.log(`🔗 URL: ${videoUrl}`);
-        console.log(`${"═".repeat(50)}\n`);
+    
 
         // ── Step 2: Extract place names from video via Gemini ──
         let phaseStart = Date.now();
@@ -223,7 +209,6 @@ export async function extractVideoPlaces(req, res) {
             sendEvent("progress", { message: statusMessage });
         });
         const aiExtractionTime = ((Date.now() - phaseStart) / 1000).toFixed(1);
-        console.log(`⏱️ [extractVideoPlaces] AI extraction: ${aiExtractionTime}s`);
 
         sendEvent("progress", { message: `Extracted places from ${aiResult.locations.length} location(s). Looking up details...` });
 
@@ -244,15 +229,10 @@ export async function extractVideoPlaces(req, res) {
             }
         );
         const placesLookupTime = ((Date.now() - phaseStart) / 1000).toFixed(1);
-        console.log(`⏱️ [extractVideoPlaces] Places API lookup: ${placesLookupTime}s`);
 
         const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
 
-        console.log(`\n📊 ═══ extractVideoPlaces TIMING BREAKDOWN ═══`);
-        console.log(`   🤖 AI Extraction (download+upload+process+infer): ${aiExtractionTime}s`);
-        console.log(`   🔍 Places API Lookup:                             ${placesLookupTime}s`);
-        console.log(`   ⏱️  TOTAL:                                         ${elapsedSeconds}s`);
-        console.log(`═══════════════════════════════════════════════════\n`);
+      
 
         // Build the primary destination name from locations
         const destination = aiResult.locations.map(l => l.city).join(", ");
@@ -300,12 +280,7 @@ export async function discoverPlaces(req, res) {
             });
         }
 
-        console.log(`\n${"═".repeat(50)}`);
-        console.log(`🔍 Discovering places in "${place}" via Places API`);
-        console.log(`🎯 Interests: ${interests.join(", ")}`);
-        console.log(`⏱️ Days: ${days}`);
-        console.log(`${"═".repeat(50)}\n`);
-
+      
         const places = await discoverPlacesService(place.trim(), interests, days);
 
         return res.json({

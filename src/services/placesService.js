@@ -211,9 +211,7 @@ async function searchPlacesForInterest(destination, interest, limit) {
  * @returns {Promise<Object[]>} Deduplicated array of discovered places
  */
 export async function discoverPlaces(destination, interests, days = 3) {
-    console.log(
-        `🔍 Discovering places in "${destination}" for interests: ${interests.join(", ")}`
-    );
+   
 
     const isSingleInterest = interests.length === 1;
 
@@ -251,9 +249,7 @@ export async function discoverPlaces(destination, interests, days = 3) {
         }
     }
 
-    console.log(
-        `✅ Discovered ${allPlaces.length} unique places across ${interests.length} interest(s)`
-    );
+  
 
     // Fire-and-forget: upload to R2 in background (don't block the response)
     uploadPlacePhotos(allPlaces).catch((err) =>
@@ -351,9 +347,7 @@ export async function lookupPlacesByLocations(
         (sum, loc) => sum + (loc.spots?.length || 0),
         0
     );
-    console.log(
-        `🔍 Looking up ${totalSpots} places across ${locations.length} location(s) via Places API (v1)`
-    );
+  
 
     // Flatten all spots into a single list with their location context
     const allSpotTasks = [];
@@ -424,9 +418,7 @@ export async function lookupPlacesByLocations(
         }
     }
 
-    console.log(
-        `✅ Found ${allPlaces.length}/${totalSpots} places via Places API (v1)`
-    );
+   
 
     return allPlaces;
 }
@@ -465,7 +457,6 @@ export async function fetchPlaceDetails(placeId) {
         // If the place is an entire country or state, find its capital/major city
         if (targetPlace.types && (targetPlace.types.includes("country") || targetPlace.types.includes("administrative_area_level_1") || targetPlace.types.includes("continent"))) {
             const regionName = targetPlace.displayName?.text || targetPlace.formattedAddress;
-            console.log(`[placesService] Place ${placeId} is a broad region (${regionName}). Finding capital...`);
             
             try {
                 const capitalQuery = `capital of ${regionName}`;
@@ -484,7 +475,6 @@ export async function fetchPlaceDetails(placeId) {
                 const searchData = await searchRes.json();
                 if (searchData.places && searchData.places.length > 0) {
                     targetPlace = searchData.places[0];
-                    console.log(`[placesService] Replaced broad region with capital: ${targetPlace.displayName?.text}`);
                 }
             } catch (searchErr) {
                 console.warn(`[placesService] Failed to find capital for ${regionName}: ${searchErr.message}`);

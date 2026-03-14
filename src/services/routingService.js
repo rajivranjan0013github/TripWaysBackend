@@ -139,7 +139,6 @@ async function getRouteForDay(places) {
  * @returns {Promise<Object>} Same plan with routes added
  */
 export async function getRoutesForItinerary(plan) {
-    console.log("🚗 Getting routes for each day (Routes API)...");
 
     // Get routes for all days in parallel
     const routePromises = plan.itinerary.map((day) =>
@@ -155,9 +154,7 @@ export async function getRoutesForItinerary(plan) {
     }));
 
     const routedDays = routes.filter((r) => r !== null).length;
-    console.log(
-        `✅ Generated routes for ${routedDays}/${plan.itinerary.length} days`
-    );
+   
 
     return plan;
 }

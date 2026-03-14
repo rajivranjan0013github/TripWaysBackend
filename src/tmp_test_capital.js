@@ -16,7 +16,6 @@ async function test() {
         }),
     });
     const data = await response.json();
-    console.log(JSON.stringify(data, null, 2));
 }
 
 test();

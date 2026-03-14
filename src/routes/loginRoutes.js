@@ -79,7 +79,6 @@ router.post("/google/loginSignUp", async (req, res) => {
             },
         });
     } catch (error) {
-        console.log("Error verifying Google token:", error.message);
         res.status(401).json({
             success: false,
             error: "Invalid token",

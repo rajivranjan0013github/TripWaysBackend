@@ -79,7 +79,6 @@ export const getTrip = async (req, res, next) => {
 // PATCH /api/trips/:tripID — Update a trip (itinerary, etc.)
 export const updateTrip = async (req, res, next) => {
     try {
-        console.log(`[updateTrip] Called for trip ID: ${req.params.tripID}`);
         const { tripID } = req.params;
         const { itinerary, discoveredPlaces } = req.body;
 
@@ -108,11 +107,9 @@ export const updateTrip = async (req, res, next) => {
         );
 
         if (!updatedTrip) {
-            console.log(`[updateTrip] Trip not found: ${tripID}`);
             return res.status(404).json({ error: "Trip not found" });
         }
 
-        console.log(`[updateTrip] Successfully updated trip: ${tripID}`);
         res.status(200).json({ success: true, trip: updatedTrip });
     } catch (err) {
         console.error(`[updateTrip] Error updating trip:`, err);

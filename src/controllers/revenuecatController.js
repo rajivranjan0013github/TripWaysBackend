@@ -26,7 +26,6 @@ export const handleRevenueCatWebhook = async (req, res) => {
             entitlement_ids,
         } = event;
 
-        console.log(`[RevenueCat] Received event: ${type} for user: ${app_user_id} (original: ${original_app_user_id})`);
 
         // We use app_user_id to identify the user because we set Purchases.logIn(user._id) on the frontend.
         // If app_user_id is an anonymous RevenueCat ID (e.g., $RCAnonymousID:...), we should ideally also check original_app_user_id.
@@ -59,7 +58,6 @@ export const handleRevenueCatWebhook = async (req, res) => {
         }
 
         if (!user) {
-            console.log(`[RevenueCat] User not found for app_user_id: ${app_user_id}. Event ignored.`);
             return res.status(200).json({ message: "User not found, but webhook received successfully." });
         }
 
@@ -90,13 +88,11 @@ export const handleRevenueCatWebhook = async (req, res) => {
                     // Let's leave expiresAt as null to signify "forever"
                 }
 
-                console.log(`[RevenueCat] Granted Premium to user ${user._id}. Expires: ${expiresAt}`);
                 break;
 
             case 'CANCELLATION':
                 // A cancellation means auto-renew is off, but they still have access until expiration.
                 // We don't remove premium status yet, RevenueCat will send an EXPIRATION event when the time comes.
-                console.log(`[RevenueCat] User ${user._id} cancelled auto-renew for ${product_id}.`);
                 break;
 
             case 'EXPIRATION':
@@ -105,15 +101,12 @@ export const handleRevenueCatWebhook = async (req, res) => {
                 user.isPremium = false;
                 user.premiumPlan = null;
                 user.premiumExpiresAt = null;
-                console.log(`[RevenueCat] Revoked Premium for user ${user._id} due to ${type}.`);
                 break;
                 
             case 'TEST':
-                console.log(`[RevenueCat] Test event received successfully.`);
                 break;
 
             default:
-                console.log(`[RevenueCat] Unhandled event type: ${type}`);
                 break;
         }
 
