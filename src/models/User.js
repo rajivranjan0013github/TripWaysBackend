@@ -64,6 +64,14 @@ const UserSchema = new mongoose.Schema(
             type: String,
             default: null,
         },
+        premiumHistory: [
+            {
+                event: { type: String },
+                productId: { type: String },
+                timestamp: { type: Date, default: Date.now },
+                store: { type: String },
+            }
+        ],
     },
     { timestamps: true }
 );

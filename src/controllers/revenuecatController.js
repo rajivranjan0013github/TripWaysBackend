@@ -12,8 +12,8 @@ export const handleRevenueCatWebhook = async (req, res) => {
             return res.status(401).json({ message: "Unauthorized" });
         }
 
-        const { event } = req.body;
-        if (!event) {
+        const event = req.body.event || req.body;
+        if (!event || !event.type) {
             return res.status(400).json({ message: "No event payload found" });
         }
 
@@ -21,52 +21,46 @@ export const handleRevenueCatWebhook = async (req, res) => {
             type,
             app_user_id,
             original_app_user_id,
+            aliases,
             product_id,
             expiration_at_ms,
             entitlement_ids,
         } = event;
 
-        console.log(`[RevenueCat] Received event: ${type} for user: ${app_user_id} (original: ${original_app_user_id})`);
+        console.log(`[RevenueCat] Received event: ${type} for user: ${app_user_id}`);
 
-        // We use app_user_id to identify the user because we set Purchases.logIn(user._id) on the frontend.
-        // If app_user_id is an anonymous RevenueCat ID (e.g., $RCAnonymousID:...), we should ideally also check original_app_user_id.
-        let userQuery = {};
-        
-        // Check if the app_user_id is a valid MongoDB ObjectId
-        if (app_user_id && app_user_id.length === 24) {
-             userQuery = { _id: app_user_id };
-        } else {
-             // Fallback: Check if we have stored the original_app_user_id previously, or if email was used.
-             // If your app was sending emails as the ID, you would check { email: app_user_id }
-             userQuery = { $or: [{ rcOriginalAppUserId: original_app_user_id }, { rcOriginalAppUserId: app_user_id }] };
-        }
+        // 1. Build a list of all potential IDs for fallback matching
+        const idsToTry = Array.from(new Set([
+            app_user_id,
+            original_app_user_id,
+            ...(aliases || [])
+        ])).filter(Boolean);
 
-        const user = await User.findOne(userQuery);
-
-        if (!user && (app_user_id.length === 24 || app_user_id.includes('@'))) {
-            // If we couldn't find the user but the ID looks like a real ID/Email, try one more time
-            // just to be robust. 
-            const fallbackUser = await User.findOne({ 
-                $or: [
-                    { _id: app_user_id.length === 24 ? app_user_id : null },
-                    { email: app_user_id }
-                ]
-            });
-
-            if (fallbackUser) {
-                user = fallbackUser;
-            }
-        }
+        // 2. Lookup: High priority on email match, fallback to rcOriginalAppUserId
+        let user = await User.findOne({
+            $or: [
+                { email: { $regex: new RegExp(`^${app_user_id}$`, 'i') } },
+                { rcOriginalAppUserId: { $in: idsToTry } }
+            ]
+        });
 
         if (!user) {
-            console.log(`[RevenueCat] User not found for app_user_id: ${app_user_id}. Event ignored.`);
+            console.log(`[RevenueCat] User not found for identifiers: ${idsToTry.join(', ')}. Event ignored.`);
             return res.status(200).json({ message: "User not found, but webhook received successfully." });
         }
 
-        // Save the original RC ID if we haven't already, for future cross-referencing
+        // 3. Save the original RC ID if we haven't already
         if (!user.rcOriginalAppUserId && original_app_user_id) {
             user.rcOriginalAppUserId = original_app_user_id;
         }
+
+        // 4. Log the event to user history
+        user.premiumHistory.push({
+            event: type,
+            productId: product_id,
+            timestamp: event.event_timestamp_ms ? new Date(event.event_timestamp_ms) : new Date(),
+            store: event.store || 'UNKNOWN'
+        });
 
         // Safely parse expiration date
         let expiresAt = null;
