@@ -8,7 +8,6 @@ export const handleRevenueCatWebhook = async (req, res) => {
     try {
         // 1. (Optional) Verify Authorization Header
         if (REVENUECAT_WEBHOOK_AUTH && req.headers.authorization !== `Bearer ${REVENUECAT_WEBHOOK_AUTH}`) {
-            console.warn("Unauthorized RevenueCat webhook attempt.");
             return res.status(401).json({ message: "Unauthorized" });
         }
 
@@ -27,8 +26,6 @@ export const handleRevenueCatWebhook = async (req, res) => {
             entitlement_ids,
         } = event;
 
-        console.log(`[RevenueCat] Received event: ${type} for user: ${app_user_id}`);
-
         // 1. Build a list of all potential IDs for fallback matching
         const idsToTry = Array.from(new Set([
             app_user_id,
@@ -45,7 +42,6 @@ export const handleRevenueCatWebhook = async (req, res) => {
         });
 
         if (!user) {
-            console.log(`[RevenueCat] User not found for identifiers: ${idsToTry.join(', ')}. Event ignored.`);
             return res.status(200).json({ message: "User not found, but webhook received successfully." });
         }
 
