@@ -24,6 +24,12 @@ const SpotSchema = new mongoose.Schema(
             type: String,
             default: null,
         },
+        importId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "ImportedVideo",
+            default: null,
+            index: true,
+        },
         address: {
             type: String,
             default: "",
@@ -55,6 +61,7 @@ const SpotSchema = new mongoose.Schema(
 
 // Compound index for efficient grouped queries
 SpotSchema.index({ userId: 1, country: 1, city: 1 });
+SpotSchema.index({ userId: 1, importId: 1 });
 
 const Spot = mongoose.model("Spot", SpotSchema);
 

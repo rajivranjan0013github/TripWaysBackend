@@ -1,4 +1,6 @@
 import { S3Client, PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import fs from "fs";
+import path from "path";
 
 // ── Lazy-initialized R2 client ──────────────────────────────────────
 // We use lazy init because ES module imports are hoisted, meaning this
@@ -144,4 +146,46 @@ export async function uploadPlacePhotos(places) {
     );
 
     return places;
+}
+
+export async function uploadImportedVideo(localFilePath, importId) {
+    const client = getClient();
+    if (!client || !localFilePath || !importId) return null;
+
+    const cfg = getConfig();
+    const ext = path.extname(localFilePath) || ".mp4";
+    const key = `imports/${importId}${ext}`;
+    const uploadStart = Date.now();
+
+    try {
+        const exists = await objectExists(key);
+        if (exists) {
+            return {
+                key,
+                publicUrl: `${cfg.publicUrl}/${key}`,
+            };
+        }
+
+        const body = fs.readFileSync(localFilePath);
+        await client.send(
+            new PutObjectCommand({
+                Bucket: cfg.bucketName,
+                Key: key,
+                Body: body,
+                ContentType: "video/mp4",
+            })
+        );
+
+        const uploadElapsed = ((Date.now() - uploadStart) / 1000).toFixed(1);
+        const fileSizeMB = (body.length / (1024 * 1024)).toFixed(1);
+        console.log(`⏱️  [R2] Video uploaded: ${fileSizeMB} MB in ${uploadElapsed}s → ${key}`);
+
+        return {
+            key,
+            publicUrl: `${cfg.publicUrl}/${key}`,
+        };
+    } catch (err) {
+        console.warn(`⚠️ R2 video upload failed for ${importId}:`, err.message);
+        return null;
+    }
 }

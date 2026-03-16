@@ -11,6 +11,7 @@ import spotRoutes from "./routes/spotRoutes.js";
 import templateTripRoutes from "./routes/templateTripRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import revenuecatRoutes from "./routes/revenuecatRoutes.js";
+import importRoutes from "./routes/importRoutes.js";
 
 const app = express();
 
@@ -40,6 +41,7 @@ app.use("/api/spots", spotRoutes);
 app.use("/api/template-trips", templateTripRoutes);
 app.use("/api/notification", notificationRoutes);
 app.use("/api/revenuecat", revenuecatRoutes);
+app.use("/api/imports", importRoutes);
 
 // Health check
 app.get("/", (req, res) => {
@@ -56,6 +58,7 @@ app.get("/", (req, res) => {
             users: "GET /api/users/:userID",
             trips: "GET /api/trips/user/:userID",
             spots: "GET /api/spots/user/:userID",
+            imports: "GET /api/imports/user/:userID",
             templateTrips: "GET /api/template-trips",
         },
     });

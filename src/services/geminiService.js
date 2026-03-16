@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import fs from "fs";
-import { downloadVideo } from "./videoDownloader.js";
+import { cleanupDownloadedVideo, downloadVideo, downloadVideoWithMetadata, getVideoMetadata } from "./videoDownloader.js";
 import config from "../config/apiConfig.js";
 
 const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
@@ -276,23 +276,26 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
  * @param {function} onProgress - Callback function to stream status updates
  * @returns {Promise<Object>} { destination, places: string[], videoTranscript, aiUnderstanding }
  */
-export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { }) {
+export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { }, options = {}) {
   let localVideoPath = null;
   let uploadResult = null;
+  let extractionSucceeded = false;
   const totalStart = Date.now();
   const timings = {};
   const INLINE_SIZE_LIMIT = 20 * 1024 * 1024; // 20MB
+  let videoMetadata = null;
 
   try {
-    // 1. Download the Video
-    onProgress("Downloading video from URL...");
+    // 1. Download video + extract metadata in a SINGLE yt-dlp call (saves ~6s vs two separate calls)
+    onProgress("Downloading video...");
     let phaseStart = Date.now();
-    localVideoPath = await downloadVideo(videoUrl);
-    timings.download = ((Date.now() - phaseStart) / 1000).toFixed(1);
-
-    // 2. Check file size to decide: inline base64 vs File Upload API
+    const dlResult = await downloadVideoWithMetadata(videoUrl);
+    localVideoPath = dlResult.filePath;
+    videoMetadata = dlResult.metadata;
+    timings.downloadAndMeta = ((Date.now() - phaseStart) / 1000).toFixed(1);
     const fileSizeBytes = fs.statSync(localVideoPath).size;
     const fileSizeMB = (fileSizeBytes / (1024 * 1024)).toFixed(1);
+    console.log(`⏱️  [Gemini] Download+metadata: ${timings.downloadAndMeta}s — ${fileSizeMB} MB, platform=${videoMetadata?.platform || 'unknown'}`);
     const useInline = fileSizeBytes <= INLINE_SIZE_LIMIT;
 
 
@@ -310,6 +313,8 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { })
           mimeType: "video/mp4"
         }
       };
+      timings.encode = ((Date.now() - phaseStart) / 1000).toFixed(1);
+      console.log(`⏱️  [Gemini] Base64 encode: ${timings.encode}s (inline path, ≤20MB)`);
       timings.upload = "skipped";
       timings.processing = "skipped";
     } else {
@@ -321,7 +326,7 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { })
         mimeType: "video/mp4"
       });
       timings.upload = ((Date.now() - phaseStart) / 1000).toFixed(1);
-
+      console.log(`⏱️  [Gemini] File API upload: ${timings.upload}s`);
 
       // Wait for PROCESSING to finish
       onProgress("Processing video chunks (this takes a few seconds)...");
@@ -339,7 +344,7 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { })
       }
 
       timings.processing = ((Date.now() - phaseStart) / 1000).toFixed(1);
-
+      console.log(`⏱️  [Gemini] File processing: ${timings.processing}s`);
       videoPart = {
         fileData: {
           fileUri: uploadResult.uri,
@@ -372,6 +377,10 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { })
 
     Respond with ONLY valid JSON in this exact structure:
     {
+      "title": "Best-effort video title",
+      "caption": "Best-effort caption or description from the post",
+      "aiUnderstanding": "A concise summary of the vibe and why these places matter",
+      "videoTranscript": "A detailed transcript or narration summary of what happens in the video",
       "locations": [
         {
           "country": "Country Name",
@@ -410,8 +419,21 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { })
     timings.geminiInference = ((Date.now() - phaseStart) / 1000).toFixed(1);
     timings.total = ((Date.now() - totalStart) / 1000).toFixed(1);
 
-   
-    return result;
+    console.log(`\n📊 [Gemini] extractPlacesFromVideoAI COMPLETE\n  ├─ Download+metadata:  ${timings.downloadAndMeta}s (${fileSizeMB} MB)\n  ├─ Upload/encode:      ${timings.upload}s\n  ├─ File processing:    ${timings.processing}s\n  ├─ Gemini inference:   ${timings.geminiInference}s\n  ├─ Spots extracted:    ${totalSpots}\n  └─ Total:              ${timings.total}s\n`);
+    extractionSucceeded = true;
+
+    return {
+      ...result,
+      title: result.title || videoMetadata?.title || "",
+      caption: result.caption || videoMetadata?.caption || "",
+      videoTranscript: result.videoTranscript || "",
+      aiUnderstanding: result.aiUnderstanding || "",
+      normalizedUrl: videoMetadata?.normalizedUrl || videoUrl,
+      sourceVideoId: videoMetadata?.sourceVideoId || null,
+      thumbnailUrl: videoMetadata?.thumbnailUrl || null,
+      platform: videoMetadata?.platform || "other",
+      localVideoPath: options.keepLocalFile ? localVideoPath : null,
+    };
 
   } catch (error) {
     console.error("❌ extractPlacesFromVideoAI failed:", error);
@@ -424,6 +446,10 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { })
       try {
         await ai.files.delete({ name: uploadResult.name });
       } catch (e) { console.error("Could not delete Gemini file", e); }
+    }
+
+    if (!options.keepLocalFile || !extractionSucceeded) {
+      cleanupDownloadedVideo(localVideoPath);
     }
   }
 }

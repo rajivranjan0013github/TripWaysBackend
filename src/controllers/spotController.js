@@ -2,6 +2,17 @@ import Spot from "../models/Spot.js";
 import User from "../models/User.js";
 import { fetchPlaceDetails } from "../services/placesService.js";
 import { uploadPlacePhotos } from "../services/r2Service.js";
+import ImportedVideo from "../models/ImportedVideo.js";
+
+async function syncImportedVideoSavedState(importId, userId) {
+    if (!importId || !userId) return;
+
+    const importedSpots = await Spot.find({ userId, importId }).select("_id").lean();
+    await ImportedVideo.findByIdAndUpdate(importId, {
+        savedSpotCount: importedSpots.length,
+        savedSpotIds: importedSpots.map((spot) => spot._id),
+    });
+}
 
 /**
  * POST /api/spots — Save spots (batch).
@@ -10,7 +21,7 @@ import { uploadPlacePhotos } from "../services/r2Service.js";
  */
 export const saveSpots = async (req, res, next) => {
     try {
-        const { userId, spots } = req.body;
+        const { userId, spots, importId } = req.body;
 
         if (!userId) {
             return res.status(400).json({ error: "userId is required" });
@@ -22,6 +33,7 @@ export const saveSpots = async (req, res, next) => {
         // 1. Map to internal shape (NO enrichment — save raw data fast)
         const rawSpots = spots.map(spot => ({
             userId,
+            importId: spot.importId || importId || null,
             country: spot.country || "Unknown",
             city: spot.city || spot.country || "Unknown",
             name: spot.name,
@@ -45,6 +57,9 @@ export const saveSpots = async (req, res, next) => {
         const spotsToSave = rawSpots.filter(s => !s.placeId || !existingPlaceIds.has(s.placeId));
 
         if (spotsToSave.length === 0) {
+            if (importId) {
+                await syncImportedVideoSavedState(importId, userId);
+            }
             return res.status(200).json({
                 success: true,
                 message: "All spots already saved",
@@ -98,6 +113,10 @@ export const saveSpots = async (req, res, next) => {
             savedCount: created.length,
             spots: created,
         });
+
+        if (importId) {
+            await syncImportedVideoSavedState(importId, userId);
+        }
 
         // 7. Background task: upload photos to R2.
         // If it was a video batch, ALSO do the enrichment in the background.
