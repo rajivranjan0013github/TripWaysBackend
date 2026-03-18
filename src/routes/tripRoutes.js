@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { planTrip, planTripStream, extractVideoPlaces, discoverPlaces } from "../controllers/tripController.js";
+import { planTrip, planTripStream, extractVideoPlaces, discoverPlaces, optimizeDayRouteController } from "../controllers/tripController.js";
 
 const router = Router();
 
@@ -14,6 +14,9 @@ router.post("/extract-video-places", extractVideoPlaces);
 
 // POST /api/discover-places - Discover places via Google Places API (no LLM)
 router.post("/discover-places", discoverPlaces);
+
+// POST /api/optimize-day - Optimize a day's spots for shortest route
+router.post("/optimize-day", optimizeDayRouteController);
 
 // GET /api/config - Returns API keys needed by frontend
 router.get("/config", (req, res) => {

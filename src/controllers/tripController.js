@@ -1,6 +1,6 @@
 import { generateDayWisePlan, extractPlacesFromVideoAI } from "../services/geminiService.js";
 import { geocodeItinerary } from "../services/geocodingService.js";
-import { getRoutesForItinerary } from "../services/routingService.js";
+import { getRoutesForItinerary, optimizeDayRoute as optimizeDayRouteService } from "../services/routingService.js";
 import { discoverPlaces as discoverPlacesService, lookupPlacesByLocations } from "../services/placesService.js";
 import ImportedVideo from "../models/ImportedVideo.js";
 import { uploadImportedVideo } from "../services/r2Service.js";
@@ -378,6 +378,50 @@ export async function discoverPlaces(req, res) {
         return res.status(500).json({
             success: false,
             error: "Failed to discover places. Please try again.",
+            details: error.message,
+        });
+    }
+}
+
+/**
+ * Optimize a single day's spot ordering for shortest travel route.
+ * POST /api/optimize-day
+ * Body: { places: [{name, coordinates: {lat, lng}, ...}, ...] }
+ */
+export async function optimizeDayRouteController(req, res) {
+    try {
+        const { places } = req.body;
+
+        if (!Array.isArray(places) || places.length < 2) {
+            return res.status(400).json({
+                success: false,
+                error: "Provide at least 2 places with coordinates to optimize.",
+            });
+        }
+
+        const validCount = places.filter(
+            (p) => p.coordinates?.lat && p.coordinates?.lng
+        ).length;
+
+        if (validCount < 2) {
+            return res.status(400).json({
+                success: false,
+                error: "At least 2 places must have valid coordinates.",
+            });
+        }
+
+        const result = await optimizeDayRouteService(places);
+
+        return res.json({
+            success: true,
+            optimizedPlaces: result.optimizedPlaces,
+            route: result.route,
+        });
+    } catch (error) {
+        console.error("❌ Day route optimization failed:", error.message);
+        return res.status(500).json({
+            success: false,
+            error: "Failed to optimize route. Please try again.",
             details: error.message,
         });
     }
