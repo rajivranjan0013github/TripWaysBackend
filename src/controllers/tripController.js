@@ -209,6 +209,23 @@ export async function extractVideoPlaces(req, res) {
         }
 
         if (userId) {
+            // ── Free tier limit: max 5 imports for non-premium users ──
+            const FREE_IMPORT_LIMIT = 5;
+            const isPremium = req.body.isPremium === true;
+
+            if (!isPremium) {
+                const importCount = await ImportedVideo.countDocuments({ userId });
+                if (importCount >= FREE_IMPORT_LIMIT) {
+                    sendEvent("error", {
+                        message: "You've reached the free import limit (5 reels). Upgrade to Premium for unlimited imports!",
+                        code: "IMPORT_LIMIT_REACHED",
+                        currentCount: importCount,
+                        limit: FREE_IMPORT_LIMIT,
+                    });
+                    return res.end();
+                }
+            }
+
             importedVideo = await ImportedVideo.create({
                 userId,
                 platform: platform || "other",
@@ -347,7 +364,7 @@ export async function extractVideoPlaces(req, res) {
  */
 export async function discoverPlaces(req, res) {
     try {
-        const { place, interests, days = 3 } = req.body;
+        const { place, interests, days = 3, excludeIds = [] } = req.body;
 
         if (!place || typeof place !== "string" || place.trim().length === 0) {
             return res.status(400).json({
@@ -364,7 +381,7 @@ export async function discoverPlaces(req, res) {
         }
 
       
-        const places = await discoverPlacesService(place.trim(), interests, days);
+        const places = await discoverPlacesService(place.trim(), interests, days, excludeIds);
 
         return res.json({
             success: true,

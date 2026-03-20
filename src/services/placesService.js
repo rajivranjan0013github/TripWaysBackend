@@ -210,7 +210,7 @@ async function searchPlacesForInterest(destination, interest, limit) {
  * @param {number} days - Number of days in the trip, used to restrict daily quantities
  * @returns {Promise<Object[]>} Deduplicated array of discovered places
  */
-export async function discoverPlaces(destination, interests, days = 3) {
+export async function discoverPlaces(destination, interests, days = 3, excludeIds = []) {
    
 
     const isSingleInterest = interests.length === 1;
@@ -236,13 +236,14 @@ export async function discoverPlaces(destination, interests, days = 3) {
 
     const results = await Promise.all(promises);
 
-    // Flatten and deduplicate by place id
+    // Flatten, deduplicate by place id, and exclude already-existing spots
+    const excludeSet = new Set(excludeIds);
     const seenIds = new Set();
     const allPlaces = [];
 
     for (const batch of results) {
         for (const place of batch) {
-            if (!seenIds.has(place.id)) {
+            if (!seenIds.has(place.id) && !excludeSet.has(place.id)) {
                 seenIds.add(place.id);
                 allPlaces.push(place);
             }
