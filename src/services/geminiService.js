@@ -295,7 +295,6 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { },
     timings.downloadAndMeta = ((Date.now() - phaseStart) / 1000).toFixed(1);
     const fileSizeBytes = fs.statSync(localVideoPath).size;
     const fileSizeMB = (fileSizeBytes / (1024 * 1024)).toFixed(1);
-    console.log(`⏱️  [Gemini] Download+metadata: ${timings.downloadAndMeta}s — ${fileSizeMB} MB, platform=${videoMetadata?.platform || 'unknown'}`);
     const useInline = fileSizeBytes <= INLINE_SIZE_LIMIT;
 
 
@@ -314,7 +313,6 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { },
         }
       };
       timings.encode = ((Date.now() - phaseStart) / 1000).toFixed(1);
-      console.log(`⏱️  [Gemini] Base64 encode: ${timings.encode}s (inline path, ≤20MB)`);
       timings.upload = "skipped";
       timings.processing = "skipped";
     } else {
@@ -326,7 +324,6 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { },
         mimeType: "video/mp4"
       });
       timings.upload = ((Date.now() - phaseStart) / 1000).toFixed(1);
-      console.log(`⏱️  [Gemini] File API upload: ${timings.upload}s`);
 
       // Wait for PROCESSING to finish
       onProgress("Processing video chunks (this takes a few seconds)...");
@@ -344,7 +341,6 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { },
       }
 
       timings.processing = ((Date.now() - phaseStart) / 1000).toFixed(1);
-      console.log(`⏱️  [Gemini] File processing: ${timings.processing}s`);
       videoPart = {
         fileData: {
           fileUri: uploadResult.uri,
@@ -419,7 +415,6 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { },
     timings.geminiInference = ((Date.now() - phaseStart) / 1000).toFixed(1);
     timings.total = ((Date.now() - totalStart) / 1000).toFixed(1);
 
-    console.log(`\n📊 [Gemini] extractPlacesFromVideoAI COMPLETE\n  ├─ Download+metadata:  ${timings.downloadAndMeta}s (${fileSizeMB} MB)\n  ├─ Upload/encode:      ${timings.upload}s\n  ├─ File processing:    ${timings.processing}s\n  ├─ Gemini inference:   ${timings.geminiInference}s\n  ├─ Spots extracted:    ${totalSpots}\n  └─ Total:              ${timings.total}s\n`);
     extractionSucceeded = true;
 
     return {

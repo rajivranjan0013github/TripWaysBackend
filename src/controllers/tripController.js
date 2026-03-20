@@ -201,7 +201,6 @@ export async function extractVideoPlaces(req, res) {
     try {
         // ── Step 1: Validate Input ──────────────────────────────
         const { videoUrl, userId, platform } = req.body;
-        console.log(`\n📹 [VideoImport] START — url=${videoUrl} userId=${userId || 'NONE'} platform=${platform || 'auto'}`);
 
         if (!videoUrl || typeof videoUrl !== "string" || !videoUrl.startsWith("http")) {
             sendEvent("error", { message: "Missing or invalid 'videoUrl'. Provide a valid URL." });
@@ -246,7 +245,6 @@ export async function extractVideoPlaces(req, res) {
             sendEvent("progress", { message: statusMessage });
         }, { keepLocalFile: true });
         phaseTimes.aiExtraction = ((Date.now() - phaseStart) / 1000).toFixed(1);
-        console.log(`⏱️  [VideoImport] AI extraction: ${phaseTimes.aiExtraction}s — ${aiResult.locations?.length || 0} location(s) found`);
 
         localVideoPath = aiResult.localVideoPath;
 
@@ -269,10 +267,8 @@ export async function extractVideoPlaces(req, res) {
             }
         );
         phaseTimes.placesLookup = ((Date.now() - phaseStart) / 1000).toFixed(1);
-        console.log(`⏱️  [VideoImport] Places API lookup: ${phaseTimes.placesLookup}s — ${places.length} place(s) resolved`);
 
         const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
-        console.log(`\n📊 [VideoImport] PIPELINE COMPLETE (user-facing)\n  ├─ AI extraction:     ${phaseTimes.aiExtraction}s\n  ├─ Places API lookup:  ${phaseTimes.placesLookup}s\n  └─ Total (user-facing): ${elapsedSeconds}s\n`);
 
         // Build the primary destination name from locations
         const destination = aiResult.locations.map(l => l.city).join(", ");
@@ -305,7 +301,6 @@ export async function extractVideoPlaces(req, res) {
                     const r2Start = Date.now();
                     const uploadedVideo = await uploadImportedVideo(aiResult.localVideoPath, importedVideo._id.toString());
                     const r2Time = ((Date.now() - r2Start) / 1000).toFixed(1);
-                    console.log(`⏱️  [VideoImport] R2 video upload (background): ${r2Time}s`);
 
                     await ImportedVideo.findByIdAndUpdate(importedVideo._id, {
                         platform: aiResult.platform || platform || "other",
@@ -325,7 +320,6 @@ export async function extractVideoPlaces(req, res) {
                         processingTimeSeconds: parseFloat(elapsedSeconds),
                         status: "completed",
                     });
-                    console.log(`✅ [VideoImport] Background DB+R2 update complete`);
                 } catch (bgErr) {
                     console.error("⚠️ [VideoImport] Background update failed:", bgErr.message);
                     await ImportedVideo.findByIdAndUpdate(importedVideo._id, {

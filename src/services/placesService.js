@@ -349,7 +349,6 @@ export async function lookupPlacesByLocations(
         0
     );
     const lookupStart = Date.now();
-    console.log(`🔍 [PlacesLookup] Starting lookup for ${totalSpots} spots across ${locations.length} location(s)`);
 
     // Flatten all spots into a single list with their location context
     const allSpotTasks = [];
@@ -397,7 +396,6 @@ export async function lookupPlacesByLocations(
                 }
             }
         }
-        console.log(`⏱️  [PlacesLookup] Batch ${batchNum}/${totalBatches}: ${batchPlaces.length} resolved, ${completed}/${totalSpots} done`);
 
         // Stream this batch's resolved places to the caller immediately
         if (batchPlaces.length > 0 && onBatchReady) {
@@ -424,7 +422,6 @@ export async function lookupPlacesByLocations(
 
    
     const lookupElapsed = ((Date.now() - lookupStart) / 1000).toFixed(1);
-    console.log(`📊 [PlacesLookup] COMPLETE: ${allPlaces.length}/${totalSpots} resolved in ${lookupElapsed}s`);
 
     return allPlaces;
 }

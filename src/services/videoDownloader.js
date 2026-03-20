@@ -116,7 +116,6 @@ export async function downloadVideo(videoUrl) {
 
         const dlElapsed = ((Date.now() - dlStart) / 1000).toFixed(1);
         const fileSizeMB = (fs.statSync(outputPath).size / (1024 * 1024)).toFixed(1);
-        console.log(`⏱️  [Downloader] Downloaded ${fileSizeMB} MB in ${dlElapsed}s → ${outputPath}`);
 
         return outputPath;
     } catch (error) {
@@ -159,7 +158,6 @@ export async function downloadVideoWithMetadata(videoUrl) {
 
         const dlElapsed = ((Date.now() - dlStart) / 1000).toFixed(1);
         const fileSizeMB = (fs.statSync(outputPath).size / (1024 * 1024)).toFixed(1);
-        console.log(`⏱️  [Downloader] Downloaded+metadata ${fileSizeMB} MB in ${dlElapsed}s → ${outputPath}`);
 
         const parsedMetadata = {
             title: metadata?.title || "",

@@ -178,7 +178,6 @@ export async function uploadImportedVideo(localFilePath, importId) {
 
         const uploadElapsed = ((Date.now() - uploadStart) / 1000).toFixed(1);
         const fileSizeMB = (body.length / (1024 * 1024)).toFixed(1);
-        console.log(`⏱️  [R2] Video uploaded: ${fileSizeMB} MB in ${uploadElapsed}s → ${key}`);
 
         return {
             key,
