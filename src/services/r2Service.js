@@ -188,3 +188,54 @@ export async function uploadImportedVideo(localFilePath, importId) {
         return null;
     }
 }
+
+/**
+ * Download a thumbnail from an external URL and upload to R2.
+ * @param {string} thumbnailUrl - Original social media thumbnail URL
+ * @param {string} importId - The import ID (used as part of filename)
+ * @returns {Promise<string|null>} Permanent R2 public URL
+ */
+export async function uploadThumbnailFromUrl(thumbnailUrl, importId) {
+    const client = getClient();
+    if (!client || !thumbnailUrl || !importId) return null;
+
+    const cfg = getConfig();
+    const key = `thumbnails/${importId}.jpg`;
+
+    try {
+        // Skip if already exists
+        if (await objectExists(key)) {
+            return `${cfg.publicUrl}/${key}`;
+        }
+
+        // Fetch image with common User-Agent to avoid social media CDN blocks
+        const response = await fetch(thumbnailUrl, {
+            redirect: "follow",
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            },
+        });
+
+        if (!response.ok) {
+            console.warn(`⚠️ Failed to download thumbnail for ${importId}: HTTP ${response.status}`);
+            return null;
+        }
+
+        const buffer = Buffer.from(await response.arrayBuffer());
+        const contentType = response.headers.get("content-type") || "image/jpeg";
+
+        await client.send(
+            new PutObjectCommand({
+                Bucket: cfg.bucketName,
+                Key: key,
+                Body: buffer,
+                ContentType: contentType,
+            })
+        );
+
+        return `${cfg.publicUrl}/${key}`;
+    } catch (err) {
+        console.warn(`⚠️ R2 thumbnail upload failed for ${importId}:`, err.message);
+        return null;
+    }
+}

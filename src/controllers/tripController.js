@@ -3,7 +3,7 @@ import { geocodeItinerary } from "../services/geocodingService.js";
 import { getRoutesForItinerary, optimizeDayRoute as optimizeDayRouteService } from "../services/routingService.js";
 import { discoverPlaces as discoverPlacesService, lookupPlacesByLocations } from "../services/placesService.js";
 import ImportedVideo from "../models/ImportedVideo.js";
-import { uploadImportedVideo } from "../services/r2Service.js";
+import { uploadImportedVideo, uploadThumbnailFromUrl } from "../services/r2Service.js";
 import { cleanupDownloadedVideo } from "../services/videoDownloader.js";
 
 /**
@@ -299,7 +299,13 @@ export async function extractVideoPlaces(req, res) {
             (async () => {
                 try {
                     const r2Start = Date.now();
-                    const uploadedVideo = await uploadImportedVideo(aiResult.localVideoPath, importedVideo._id.toString());
+                    
+                    // Upload Video and Thumbnail to R2 concurrently for efficiency
+                    const [uploadedVideo, r2ThumbnailUrl] = await Promise.all([
+                        uploadImportedVideo(aiResult.localVideoPath, importedVideo._id.toString()),
+                        aiResult.thumbnailUrl ? uploadThumbnailFromUrl(aiResult.thumbnailUrl, importedVideo._id.toString()) : Promise.resolve(null)
+                    ]);
+                    
                     const r2Time = ((Date.now() - r2Start) / 1000).toFixed(1);
 
                     await ImportedVideo.findByIdAndUpdate(importedVideo._id, {
@@ -308,7 +314,7 @@ export async function extractVideoPlaces(req, res) {
                         sourceVideoId: aiResult.sourceVideoId || null,
                         title: aiResult.title || "",
                         caption: aiResult.caption || "",
-                        thumbnailUrl: aiResult.thumbnailUrl || null,
+                        thumbnailUrl: r2ThumbnailUrl || aiResult.thumbnailUrl || null,
                         cloudflareVideoUrl: uploadedVideo?.publicUrl || null,
                         cloudflareAssetKey: uploadedVideo?.key || null,
                         aiTranscript: aiResult.videoTranscript || "",
