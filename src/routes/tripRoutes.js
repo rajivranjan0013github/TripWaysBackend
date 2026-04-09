@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { planTrip, planTripStream, extractVideoPlaces, discoverPlaces, optimizeDayRouteController } from "../controllers/tripController.js";
+import { planTrip, planTripStream, extractVideoPlaces, extractAndSaveVideoPlaces, discoverPlaces, optimizeDayRouteController } from "../controllers/tripController.js";
 
 const router = Router();
 
@@ -11,6 +11,9 @@ router.post("/plan-stream", planTripStream);
 
 // POST /api/extract-video-places - Extract places from a Video URL (SSE streaming)
 router.post("/extract-video-places", extractVideoPlaces);
+
+// POST /api/extract-and-save - Fire-and-forget: extract + auto-save spots (for share intents)
+router.post("/extract-and-save", extractAndSaveVideoPlaces);
 
 // POST /api/discover-places - Discover places via Google Places API (no LLM)
 router.post("/discover-places", discoverPlaces);

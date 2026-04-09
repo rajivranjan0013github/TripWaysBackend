@@ -1,5 +1,6 @@
 import config from "../config/apiConfig.js";
 import { uploadPlacePhotos } from "./r2Service.js";
+import { normalizeCountryName } from "../utils/countryNormalizer.js";
 
 // ── Places API (v1) endpoints ──
 const TEXT_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText";
@@ -86,7 +87,7 @@ function mapPlace(p, interest, extraFields = {}) {
         const countryComp = addr.find(c => c.types?.includes("country"));
         const cityComp = addr.find(c => c.types?.includes("locality") || c.types?.includes("administrative_area_level_1"));
 
-        if (countryComp) mapped.country = countryComp.longText;
+        if (countryComp) mapped.country = normalizeCountryName(countryComp.longText);
         if (cityComp) {
             mapped.city = cityComp.longText;
         } else if (countryComp) {
@@ -288,7 +289,7 @@ async function lookupSingleSpot(spotName, city, country) {
             const data = await response.json();
 
             if (data.places && data.places.length > 0) {
-                return mapPlace(data.places[0], "video", { country, city });
+                return mapPlace(data.places[0], "video", { country: normalizeCountryName(country), city });
             }
 
             if (data.places && data.places.length === 0) {
@@ -384,7 +385,7 @@ export async function lookupPlacesByLocations(
         );
 
         const batchPlaces = [];
-        const batchElapsed = ((Date.now() - Date.now()) / 1000).toFixed(1);
+
         for (const result of batchResults) {
             completed++;
             if (result.status === "fulfilled" && result.value) {

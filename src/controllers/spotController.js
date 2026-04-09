@@ -2,6 +2,7 @@ import Spot from "../models/Spot.js";
 import User from "../models/User.js";
 import { fetchPlaceDetails } from "../services/placesService.js";
 import { uploadPlacePhotos } from "../services/r2Service.js";
+import { normalizeCountryName } from "../utils/countryNormalizer.js";
 import ImportedVideo from "../models/ImportedVideo.js";
 
 async function syncImportedVideoSavedState(importId, userId) {
@@ -34,8 +35,8 @@ export const saveSpots = async (req, res, next) => {
         const rawSpots = spots.map(spot => ({
             userId,
             importId: spot.importId || importId || null,
-            country: spot.country || "Unknown",
-            city: spot.city || spot.country || "Unknown",
+            country: normalizeCountryName(spot.country),
+            city: spot.city || normalizeCountryName(spot.country) || "Unknown",
             name: spot.name,
             placeId: spot.placeId || spot.id || null,
             address: spot.address || "",
@@ -89,11 +90,11 @@ export const saveSpots = async (req, res, next) => {
                         spot.name = details.name;
                         spot.placeId = details.id;
                         spot.city = details.city || details.name;
-                        spot.country = details.country;
+                        spot.country = normalizeCountryName(details.country);
                         spot.coordinates = details.coordinates;
                     } else {
-                        spot.city = (spot.city && spot.city !== "Unknown") ? spot.city : (details.city || details.country || spot.city || spot.country || "Unknown");
-                        spot.country = (spot.country && spot.country !== "Unknown") ? spot.country : (details.country || spot.country || "Unknown");
+                        spot.city = (spot.city && spot.city !== "Unknown") ? spot.city : (details.city || normalizeCountryName(details.country) || spot.city || spot.country || "Unknown");
+                        spot.country = (spot.country && spot.country !== "Unknown") ? spot.country : normalizeCountryName(details.country || spot.country);
                     }
                 }
             }
@@ -121,62 +122,66 @@ export const saveSpots = async (req, res, next) => {
         // 7. Background task: upload photos to R2.
         // If it was a video batch, ALSO do the enrichment in the background.
         setImmediate(async () => {
-            for (const spot of created) {
-                try {
-                    if (!spot.placeId) continue;
+            try {
+                for (const spot of created) {
+                    try {
+                        if (!spot.placeId) continue;
 
-                    // If it was already manually enriched, just upload the photo to R2
-                    if (isManualSave) {
-                        if (spot.photoUrl && !spot.photoUrl.includes('r2.')) {
-                            const tempSpot = [{ placeId: spot.placeId, photoUrl: spot.photoUrl }];
+                        // If it was already manually enriched, just upload the photo to R2
+                        if (isManualSave) {
+                            if (spot.photoUrl && !spot.photoUrl.includes('r2.')) {
+                                const tempSpot = [{ placeId: spot.placeId, photoUrl: spot.photoUrl }];
+                                await uploadPlacePhotos(tempSpot);
+                                await Spot.findByIdAndUpdate(spot._id, { photoUrl: tempSpot[0].photoUrl });
+                            }
+                            continue;
+                        }
+
+                        // For video batch, do the full background enrichment
+                        const isLikelyRegion = spot.name === spot.country || spot.name === spot.city;
+                        const needsEnrichment = !spot.photoUrl || !spot.coordinates?.lat || spot.rating === null || isLikelyRegion;
+                        if (!needsEnrichment) {
+                            if (spot.photoUrl && !spot.photoUrl.includes('r2.')) {
+                                await uploadPlacePhotos([spot]);
+                                await Spot.findByIdAndUpdate(spot._id, { photoUrl: spot.photoUrl });
+                            }
+                            continue;
+                        }
+
+                        const details = await fetchPlaceDetails(spot.placeId);
+                        if (!details) continue;
+
+                        const updateFields = {
+                            photoUrl: spot.photoUrl || details.photoUrl || null,
+                            coordinates: spot.coordinates?.lat ? spot.coordinates : (details.coordinates || { lat: null, lng: null }),
+                            rating: spot.rating || details.rating || null,
+                            userRatingCount: spot.userRatingCount !== null ? spot.userRatingCount : (details?.userRatingCount !== undefined ? details.userRatingCount : null),
+                            address: spot.address || details.address || "",
+                            city: (spot.city && spot.city !== "Unknown") ? spot.city : (details.city || normalizeCountryName(details.country) || spot.city || spot.country || "Unknown"),
+                            country: (spot.country && spot.country !== "Unknown") ? spot.country : normalizeCountryName(details.country || spot.country),
+                        };
+
+                        if (details.id && details.id !== spot.placeId) {
+                            updateFields.name = details.name;
+                            updateFields.placeId = details.id;
+                            updateFields.city = details.city || details.name;
+                            updateFields.country = normalizeCountryName(details.country);
+                            updateFields.coordinates = details.coordinates;
+                        }
+
+                        if (updateFields.photoUrl) {
+                            const tempSpot = [{ placeId: spot.placeId, photoUrl: updateFields.photoUrl }];
                             await uploadPlacePhotos(tempSpot);
-                            await Spot.findByIdAndUpdate(spot._id, { photoUrl: tempSpot[0].photoUrl });
+                            updateFields.photoUrl = tempSpot[0].photoUrl;
                         }
-                        continue;
+
+                        await Spot.findByIdAndUpdate(spot._id, updateFields);
+                    } catch (err) {
+                        console.error(`[saveSpots] Background task failed for ${spot.placeId}:`, err.message);
                     }
-
-                    // For video batch, do the full background enrichment
-                    const isLikelyRegion = spot.name === spot.country || spot.name === spot.city;
-                    const needsEnrichment = !spot.photoUrl || !spot.coordinates?.lat || spot.rating === null || isLikelyRegion;
-                    if (!needsEnrichment) {
-                        if (spot.photoUrl && !spot.photoUrl.includes('r2.')) {
-                            await uploadPlacePhotos([spot]);
-                            await Spot.findByIdAndUpdate(spot._id, { photoUrl: spot.photoUrl });
-                        }
-                        continue;
-                    }
-
-                    const details = await fetchPlaceDetails(spot.placeId);
-                    if (!details) continue;
-
-                    const updateFields = {
-                        photoUrl: spot.photoUrl || details.photoUrl || null,
-                        coordinates: spot.coordinates?.lat ? spot.coordinates : (details.coordinates || { lat: null, lng: null }),
-                        rating: spot.rating || details.rating || null,
-                        userRatingCount: spot.userRatingCount !== null ? spot.userRatingCount : (details?.userRatingCount !== undefined ? details.userRatingCount : null),
-                        address: spot.address || details.address || "",
-                        city: (spot.city && spot.city !== "Unknown") ? spot.city : (details.city || details.country || spot.city || spot.country || "Unknown"),
-                        country: (spot.country && spot.country !== "Unknown") ? spot.country : (details.country || spot.country || "Unknown"),
-                    };
-
-                    if (details.id && details.id !== spot.placeId) {
-                        updateFields.name = details.name;
-                        updateFields.placeId = details.id;
-                        updateFields.city = details.city || details.name;
-                        updateFields.country = details.country;
-                        updateFields.coordinates = details.coordinates;
-                    }
-
-                    if (updateFields.photoUrl) {
-                        const tempSpot = [{ placeId: spot.placeId, photoUrl: updateFields.photoUrl }];
-                        await uploadPlacePhotos(tempSpot);
-                        updateFields.photoUrl = tempSpot[0].photoUrl;
-                    }
-
-                    await Spot.findByIdAndUpdate(spot._id, updateFields);
-                } catch (err) {
-                    console.error(`[saveSpots] Background task failed for ${spot.placeId}:`, err.message);
                 }
+            } catch (outerErr) {
+                console.error("[saveSpots] Background enrichment loop failed:", outerErr.message);
             }
         });
     } catch (err) {

@@ -1,5 +1,6 @@
 import { S3Client, PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import fs from "fs";
+import fsp from "fs/promises";
 import path from "path";
 
 // ── Lazy-initialized R2 client ──────────────────────────────────────
@@ -166,7 +167,7 @@ export async function uploadImportedVideo(localFilePath, importId) {
             };
         }
 
-        const body = fs.readFileSync(localFilePath);
+        const body = await fsp.readFile(localFilePath);
         await client.send(
             new PutObjectCommand({
                 Bucket: cfg.bucketName,
@@ -236,6 +237,48 @@ export async function uploadThumbnailFromUrl(thumbnailUrl, importId) {
         return `${cfg.publicUrl}/${key}`;
     } catch (err) {
         console.warn(`⚠️ R2 thumbnail upload failed for ${importId}:`, err.message);
+        return null;
+    }
+}
+
+/**
+ * Upload a thumbnail from a local file path to R2.
+ * Used for carousel imports where the thumbnail is a downloaded image, not a URL.
+ *
+ * @param {string} localPath - Absolute path to the local image file
+ * @param {string} importId - The import ID (used as part of filename)
+ * @returns {Promise<string|null>} Permanent R2 public URL
+ */
+export async function uploadThumbnailFromFile(localPath, importId) {
+    const client = getClient();
+    if (!client || !localPath || !importId) return null;
+
+    const cfg = getConfig();
+    const key = `thumbnails/${importId}.jpg`;
+
+    try {
+        // Skip if already exists
+        if (await objectExists(key)) {
+            return `${cfg.publicUrl}/${key}`;
+        }
+
+        const buffer = await fsp.readFile(localPath);
+        const ext = path.extname(localPath).toLowerCase();
+        const mimeMap = { ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif" };
+        const contentType = mimeMap[ext] || "image/jpeg";
+
+        await client.send(
+            new PutObjectCommand({
+                Bucket: cfg.bucketName,
+                Key: key,
+                Body: buffer,
+                ContentType: contentType,
+            })
+        );
+
+        return `${cfg.publicUrl}/${key}`;
+    } catch (err) {
+        console.warn(`⚠️ R2 thumbnail upload from file failed for ${importId}:`, err.message);
         return null;
     }
 }

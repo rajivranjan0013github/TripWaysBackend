@@ -1,7 +1,10 @@
 import { GoogleGenAI } from "@google/genai";
 import fs from "fs";
-import { cleanupDownloadedVideo, downloadVideo, downloadVideoWithMetadata, getVideoMetadata } from "./videoDownloader.js";
+import fsp from "fs/promises";
+import path from "path";
+import { cleanupDownloadedVideo, cleanupDownloadedFiles, downloadVideo, downloadVideoWithMetadata, downloadMediaWithMetadata, getVideoMetadata } from "./videoDownloader.js";
 import config from "../config/apiConfig.js";
+import ImportedVideo from "../models/ImportedVideo.js";
 
 const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
 
@@ -125,8 +128,8 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
     timings.download = ((Date.now() - phaseStart) / 1000).toFixed(1);
 
     // 2. Check file size to decide: inline base64 vs File Upload API
-    const fileSizeBytes = fs.statSync(localVideoPath).size;
-    const fileSizeMB = (fileSizeBytes / (1024 * 1024)).toFixed(1);
+    const fileStat = await fsp.stat(localVideoPath);
+    const fileSizeBytes = fileStat.size;
     const useInline = fileSizeBytes <= INLINE_SIZE_LIMIT;
 
 
@@ -136,7 +139,7 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
       // ⚡ FAST PATH: Read as base64, skip upload + processing entirely
       onProgress("Preparing video for AI analysis...");
       phaseStart = Date.now();
-      const videoBuffer = fs.readFileSync(localVideoPath);
+      const videoBuffer = await fsp.readFile(localVideoPath);
       const base64Data = videoBuffer.toString("base64");
       videoPart = {
         inlineData: {
@@ -227,7 +230,7 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
 
 
     const response = await ai.models.generateContent({
-      model: "gemini-flash-latest", // Pro model is much better at video extraction
+      model: "gemini-2.5-flash",
       contents: [
         videoPart,
         { text: prompt }
@@ -270,6 +273,9 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
  * Extract place names and destination from a video URL using Gemini.
  * Does NOT generate an itinerary — only extracts raw place data for further lookup.
  *
+ * ⚡ CACHE: Checks if a completed ImportedVideo with the same sourceVideoId exists.
+ *    If found, returns the cached AI extraction + resolved places instantly.
+ *
  * Uses inline base64 for videos ≤20MB (skips upload + processing), falls back to File API for larger files.
  *
  * @param {string} videoUrl - A public URL to a video (e.g. YouTube, Instagram Reel)
@@ -278,89 +284,174 @@ export async function generatePlanFromVideo(videoUrl, days, onProgress = () => {
  */
 export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { }, options = {}) {
   let localVideoPath = null;
+  let carouselPaths = [];
   let uploadResult = null;
   let extractionSucceeded = false;
   const totalStart = Date.now();
   const timings = {};
   const INLINE_SIZE_LIMIT = 20 * 1024 * 1024; // 20MB
   let videoMetadata = null;
+  let mediaType = "video"; // "video" or "carousel"
 
   try {
-    // 1. Download video + extract metadata in a SINGLE yt-dlp call (saves ~6s vs two separate calls)
-    onProgress("Downloading video...");
+    // ── CACHE CHECK: Quick metadata fetch to get sourceVideoId ──
+    onProgress("Checking if this video was already analyzed...");
+    let quickMeta = null;
+    try {
+      quickMeta = await getVideoMetadata(videoUrl);
+    } catch {
+      // Non-fatal — proceed without cache
+    }
+
+    if (quickMeta?.sourceVideoId) {
+      // Look for a completed import with the same sourceVideoId (global cache)
+      const cachedImport = await ImportedVideo.findOne({
+        sourceVideoId: quickMeta.sourceVideoId,
+        status: "completed",
+        locations: { $exists: true, $ne: [] },
+      }).lean();
+
+      if (cachedImport) {
+
+        return {
+          locations: cachedImport.locations || [],
+          mediaType: cachedImport.mediaType || "video",
+          title: cachedImport.title || quickMeta.title || "",
+          caption: cachedImport.caption || quickMeta.caption || "",
+          videoTranscript: cachedImport.aiTranscript || "",
+          aiUnderstanding: cachedImport.aiUnderstanding || "",
+          normalizedUrl: cachedImport.normalizedUrl || quickMeta.normalizedUrl || videoUrl,
+          sourceVideoId: quickMeta.sourceVideoId,
+          thumbnailUrl: cachedImport.thumbnailUrl || quickMeta.thumbnailUrl || null,
+          platform: cachedImport.platform || quickMeta.platform || "other",
+          localVideoPath: null,
+          localCarouselPaths: null,
+          // Cache-specific fields
+          _cached: true,
+          _cachedImportId: cachedImport._id,
+          _cachedResolvedPlaces: cachedImport.resolvedPlaces || [],
+          _cachedCloudflareVideoUrl: cachedImport.cloudflareVideoUrl || null,
+          _cachedCloudflareAssetKey: cachedImport.cloudflareAssetKey || null,
+        };
+      }
+
+    }
+
+    // ── No cache hit — proceed with full download + extraction ──
+
+    // 1. Smart download: auto-detects video vs image carousel
+    onProgress("Downloading media...");
     let phaseStart = Date.now();
-    const dlResult = await downloadVideoWithMetadata(videoUrl);
-    localVideoPath = dlResult.filePath;
+    const dlResult = await downloadMediaWithMetadata(videoUrl, {
+      importId: options.importId || null,
+      userId: options.userId || null,
+    });
     videoMetadata = dlResult.metadata;
+    mediaType = dlResult.type; // "video" or "carousel"
     timings.downloadAndMeta = ((Date.now() - phaseStart) / 1000).toFixed(1);
-    const fileSizeBytes = fs.statSync(localVideoPath).size;
-    const fileSizeMB = (fileSizeBytes / (1024 * 1024)).toFixed(1);
-    const useInline = fileSizeBytes <= INLINE_SIZE_LIMIT;
 
+    let mediaParts = [];
 
-    let videoPart;
-
-    if (useInline) {
-      // ⚡ FAST PATH: Read as base64, skip upload + processing entirely
-      onProgress("Preparing video for AI analysis...");
+    if (mediaType === "carousel") {
+      // ─── CAROUSEL PATH: Send all images to Gemini as inline data parts ───
+      carouselPaths = dlResult.filePaths;
+      onProgress(`📸 Found ${carouselPaths.length} carousel image(s). Preparing for AI...`);
       phaseStart = Date.now();
-      const videoBuffer = fs.readFileSync(localVideoPath);
-      const base64Data = videoBuffer.toString("base64");
-      videoPart = {
-        inlineData: {
-          data: base64Data,
-          mimeType: "video/mp4"
-        }
-      };
+
+      // Parallelize media reading + encoding (handles both images AND video files in mixed carousels)
+      mediaParts = await Promise.all(carouselPaths.map(async (filePath) => {
+        const ext = path.extname(filePath).toLowerCase();
+        const mimeMap = {
+          ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+          ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif",
+          ".mp4": "video/mp4", ".mov": "video/quicktime",
+        };
+        const mimeType = mimeMap[ext] || "image/jpeg";
+
+        const fileBuffer = await fsp.readFile(filePath);
+        return {
+          inlineData: {
+            data: fileBuffer.toString("base64"),
+            mimeType,
+          },
+        };
+      }));
+
+      // Use the first image as the thumbnail
+      if (!videoMetadata.thumbnailUrl && carouselPaths.length > 0) {
+        videoMetadata.thumbnailUrl = carouselPaths[0]; // local path, will be uploaded to R2 later
+      }
+
       timings.encode = ((Date.now() - phaseStart) / 1000).toFixed(1);
       timings.upload = "skipped";
       timings.processing = "skipped";
+
     } else {
-      // 🐌 FALLBACK: Large file → use File Upload API + poll for processing
-      onProgress("Uploading video to AI for analysis...");
-      phaseStart = Date.now();
-      uploadResult = await ai.files.upload({
-        file: localVideoPath,
-        mimeType: "video/mp4"
-      });
-      timings.upload = ((Date.now() - phaseStart) / 1000).toFixed(1);
+      // ─── VIDEO PATH: Existing logic ───
+      localVideoPath = dlResult.filePath;
+      const fileStat = await fsp.stat(localVideoPath);
+      const fileSizeBytes = fileStat.size;
+      const useInline = fileSizeBytes <= INLINE_SIZE_LIMIT;
 
-      // Wait for PROCESSING to finish
-      onProgress("Processing video chunks (this takes a few seconds)...");
-      phaseStart = Date.now();
-      let fileState = uploadResult.state;
-      let pollDelay = 1500;
-      while (fileState === 'PROCESSING') {
-        await new Promise((resolve) => setTimeout(resolve, pollDelay));
-        pollDelay = Math.min(pollDelay * 1.5, 5000);
-        const checkResult = await ai.files.get({ name: uploadResult.name });
-        fileState = checkResult.state;
-        if (fileState === 'FAILED') {
-          throw new Error("Gemini failed to process the uploaded video.");
+      if (useInline) {
+        onProgress("Preparing video for AI analysis...");
+        phaseStart = Date.now();
+        const videoBuffer = await fsp.readFile(localVideoPath);
+        mediaParts.push({
+          inlineData: {
+            data: videoBuffer.toString("base64"),
+            mimeType: "video/mp4",
+          },
+        });
+        timings.encode = ((Date.now() - phaseStart) / 1000).toFixed(1);
+        timings.upload = "skipped";
+        timings.processing = "skipped";
+      } else {
+        onProgress("Uploading video to AI for analysis...");
+        phaseStart = Date.now();
+        uploadResult = await ai.files.upload({
+          file: localVideoPath,
+          mimeType: "video/mp4",
+        });
+        timings.upload = ((Date.now() - phaseStart) / 1000).toFixed(1);
+
+        onProgress("Processing video chunks (this takes a few seconds)...");
+        phaseStart = Date.now();
+        let fileState = uploadResult.state;
+        let pollDelay = 1500;
+        while (fileState === "PROCESSING") {
+          await new Promise((resolve) => setTimeout(resolve, pollDelay));
+          pollDelay = Math.min(pollDelay * 1.5, 5000);
+          const checkResult = await ai.files.get({ name: uploadResult.name });
+          fileState = checkResult.state;
+          if (fileState === "FAILED") {
+            throw new Error("Gemini failed to process the uploaded video.");
+          }
         }
+        timings.processing = ((Date.now() - phaseStart) / 1000).toFixed(1);
+
+        mediaParts.push({
+          fileData: {
+            fileUri: uploadResult.uri,
+            mimeType: uploadResult.mimeType,
+          },
+        });
       }
-
-      timings.processing = ((Date.now() - phaseStart) / 1000).toFixed(1);
-      videoPart = {
-        fileData: {
-          fileUri: uploadResult.uri,
-          mimeType: uploadResult.mimeType
-        }
-      };
     }
 
     // 3. Prompt Gemini to extract places grouped by country and city
-    onProgress("🎬 AI is watching the video and extracting places...");
+    const mediaLabel = mediaType === "carousel" ? "images" : "video";
+    onProgress(`🎬 AI is analyzing the ${mediaLabel} and extracting places...`);
     phaseStart = Date.now();
-    const prompt = `You are an expert travel analyst and video reviewer.
-    Watch the attached video carefully.
+    const prompt = `You are an expert travel analyst and ${mediaType === "carousel" ? "image" : "video"} reviewer.
+    ${mediaType === "carousel" ? "Look at all the attached images carefully. These are from an Instagram carousel post." : "Watch the attached video carefully."}
 
-    Your task is to extract travel-related information from this video. DO NOT create an itinerary. Only extract raw data.
+    Your task is to extract travel-related information from ${mediaType === "carousel" ? "these images" : "this video"}. DO NOT create an itinerary. Only extract raw data.
 
-    1. Identify ALL countries and cities/regions featured in the video.
+    1. Identify ALL countries and cities/regions featured in the ${mediaLabel}.
     2. For each city, extract ALL specific places, tourist spots, restaurants, cafés, landmarks, hotels, or experiences mentioned or visually shown.
-    3. Determine the overall "vibe" or theme of the video (e.g., adventure, food tour, relaxing getaway, cultural exploration).
-    4. Write a detailed transcript/summary of what happens in the video.
+    3. Determine the overall "vibe" or theme of the ${mediaLabel} (e.g., adventure, food tour, relaxing getaway, cultural exploration).
+    4. Write a detailed ${mediaType === "carousel" ? "description/summary of what is shown in the images" : "transcript/summary of what happens in the video"}.
 
     Rules:
     - Group places by their COUNTRY and CITY/REGION.
@@ -368,15 +459,15 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { },
     - Use the official/commonly known name for each place (e.g., "Eiffel Tower" not "that big tower").
     - If a place is shown but not named, try to identify it from visual cues.
     - Only include places that actually exist and can be found on Google Maps.
-    - Use proper country names (e.g., "France" not "FR").
+    - Use proper, full, commonly-used English country names consistently (e.g., "United Kingdom" not "UK" or "England", "United States" not "USA" or "US", "South Korea" not "Korea", "United Arab Emirates" not "UAE", "Netherlands" not "Holland", "Czechia" not "Czech Republic").
     - Do NOT generate an itinerary or day-wise plan.
 
     Respond with ONLY valid JSON in this exact structure:
     {
-      "title": "Best-effort video title",
+      "title": "Best-effort title",
       "caption": "Best-effort caption or description from the post",
       "aiUnderstanding": "A concise summary of the vibe and why these places matter",
-      "videoTranscript": "A detailed transcript or narration summary of what happens in the video",
+      "videoTranscript": "A detailed ${mediaType === "carousel" ? "description of what the images show" : "transcript or narration summary of what happens in the video"}",
       "locations": [
         {
           "country": "Country Name",
@@ -391,9 +482,9 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { },
 
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite-preview",
+      model: "gemini-2.5-flash",
       contents: [
-        videoPart,
+        ...mediaParts,
         { text: prompt }
       ],
       config: {
@@ -419,6 +510,7 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { },
 
     return {
       ...result,
+      mediaType,
       title: result.title || videoMetadata?.title || "",
       caption: result.caption || videoMetadata?.caption || "",
       videoTranscript: result.videoTranscript || "",
@@ -427,7 +519,9 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { },
       sourceVideoId: videoMetadata?.sourceVideoId || null,
       thumbnailUrl: videoMetadata?.thumbnailUrl || null,
       platform: videoMetadata?.platform || "other",
-      localVideoPath: options.keepLocalFile ? localVideoPath : null,
+      localVideoPath: (options.keepLocalFile && mediaType === "video") ? localVideoPath : null,
+      localCarouselPaths: (options.keepLocalFile && mediaType === "carousel") ? carouselPaths : null,
+      _cached: false,
     };
 
   } catch (error) {
@@ -444,7 +538,8 @@ export async function extractPlacesFromVideoAI(videoUrl, onProgress = () => { },
     }
 
     if (!options.keepLocalFile || !extractionSucceeded) {
-      cleanupDownloadedVideo(localVideoPath);
+      await cleanupDownloadedVideo(localVideoPath);
+      await cleanupDownloadedFiles(carouselPaths);
     }
   }
 }

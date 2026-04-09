@@ -12,6 +12,7 @@ import templateTripRoutes from "./routes/templateTripRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import revenuecatRoutes from "./routes/revenuecatRoutes.js";
 import importRoutes from "./routes/importRoutes.js";
+import adminRoutes from "./routes/adminRoutes.js";
 
 const app = express();
 
@@ -42,6 +43,7 @@ app.use("/api/template-trips", templateTripRoutes);
 app.use("/api/notification", notificationRoutes);
 app.use("/api/revenuecat", revenuecatRoutes);
 app.use("/api/imports", importRoutes);
+app.use("/api/admin", adminRoutes);
 
 // Health check
 app.get("/", (req, res) => {
@@ -60,6 +62,8 @@ app.get("/", (req, res) => {
             spots: "GET /api/spots/user/:userID",
             imports: "GET /api/imports/user/:userID",
             templateTrips: "GET /api/template-trips",
+            downloadErrors: "GET /api/admin/download-errors",
+            downloadErrorStats: "GET /api/admin/download-errors/stats",
         },
     });
 });

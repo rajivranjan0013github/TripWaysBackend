@@ -3,3 +3,7 @@ node_modules/
 .DS_Store
 tmp/
 src/config
+check_dlp.js
+cookies.txt
+tiktok.txt
+tmp_test

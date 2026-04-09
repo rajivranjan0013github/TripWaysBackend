@@ -1,10 +1,96 @@
 import { generateDayWisePlan, extractPlacesFromVideoAI } from "../services/geminiService.js";
 import { geocodeItinerary } from "../services/geocodingService.js";
 import { getRoutesForItinerary, optimizeDayRoute as optimizeDayRouteService } from "../services/routingService.js";
-import { discoverPlaces as discoverPlacesService, lookupPlacesByLocations } from "../services/placesService.js";
+import { discoverPlaces as discoverPlacesService, lookupPlacesByLocations, fetchPlaceDetails } from "../services/placesService.js";
 import ImportedVideo from "../models/ImportedVideo.js";
-import { uploadImportedVideo, uploadThumbnailFromUrl } from "../services/r2Service.js";
-import { cleanupDownloadedVideo } from "../services/videoDownloader.js";
+import { normalizeCountryName } from "../utils/countryNormalizer.js";
+import Spot from "../models/Spot.js";
+import User from "../models/User.js";
+import { uploadImportedVideo, uploadThumbnailFromUrl, uploadThumbnailFromFile, uploadPlacePhotos } from "../services/r2Service.js";
+import { cleanupDownloadedVideo, cleanupDownloadedFiles } from "../services/videoDownloader.js";
+import { logDownloadError } from "../utils/logDownloadError.js";
+
+/**
+ * Shared helper: Upload media to R2 + finalize ImportedVideo record.
+ * Used by both extractVideoPlaces and extractAndSaveVideoPlaces.
+ *
+ * @param {Object} params
+ * @param {Object} params.importedVideo - Mongoose document
+ * @param {Object} params.aiResult - Result from extractPlacesFromVideoAI
+ * @param {Object[]} params.places - Resolved places array
+ * @param {string} params.destination - Destination string
+ * @param {string} params.mediaType - "video" or "carousel"
+ * @param {boolean} params.isCached - Whether this was a cache hit
+ * @param {string|null} params.localVideoPath - Path to local video (if video type)
+ * @param {string[]} params.localCarouselPaths - Paths to carousel images
+ * @param {string} params.videoUrl - Original video URL
+ * @param {string} params.platform - Platform string
+ * @param {number} [params.processingTimeSeconds] - Optional processing time
+ */
+async function finalizeImportRecord({
+    importedVideo,
+    aiResult,
+    places,
+    destination,
+    mediaType,
+    isCached,
+    localVideoPath,
+    localCarouselPaths,
+    videoUrl,
+    platform,
+    processingTimeSeconds = null,
+}) {
+    let uploadedVideo = null;
+    let r2ThumbnailUrl = null;
+
+    if (isCached) {
+        // ⚡ CACHE HIT: Copy URLs from cached record, skip R2 upload
+        uploadedVideo = aiResult._cachedCloudflareVideoUrl
+            ? { publicUrl: aiResult._cachedCloudflareVideoUrl, key: aiResult._cachedCloudflareAssetKey }
+            : null;
+        r2ThumbnailUrl = aiResult.thumbnailUrl;
+    } else {
+        // Normal flow: Upload Video/Thumbnail to R2 concurrently
+        const videoToUpload = mediaType === "video" ? localVideoPath : null;
+
+        // For carousels, use uploadThumbnailFromFile (local file), not uploadThumbnailFromUrl
+        const isCarousel = mediaType === "carousel";
+        const carouselFirstImage = localCarouselPaths?.[0] || null;
+
+        const [uploaded, thumbUrl] = await Promise.all([
+            videoToUpload ? uploadImportedVideo(videoToUpload, importedVideo._id.toString()) : Promise.resolve(null),
+            isCarousel && carouselFirstImage
+                ? uploadThumbnailFromFile(carouselFirstImage, importedVideo._id.toString())
+                : (aiResult.thumbnailUrl ? uploadThumbnailFromUrl(aiResult.thumbnailUrl, importedVideo._id.toString()) : Promise.resolve(null)),
+        ]);
+        uploadedVideo = uploaded;
+        r2ThumbnailUrl = thumbUrl;
+    }
+
+    const updateFields = {
+        platform: aiResult.platform || platform || "other",
+        mediaType,
+        normalizedUrl: aiResult.normalizedUrl || videoUrl,
+        sourceVideoId: aiResult.sourceVideoId || null,
+        title: aiResult.title || "",
+        caption: aiResult.caption || "",
+        thumbnailUrl: r2ThumbnailUrl || aiResult.thumbnailUrl || null,
+        cloudflareVideoUrl: uploadedVideo?.publicUrl || null,
+        cloudflareAssetKey: uploadedVideo?.key || null,
+        aiTranscript: aiResult.videoTranscript || "",
+        aiUnderstanding: aiResult.aiUnderstanding || "",
+        locations: aiResult.locations || [],
+        destination,
+        resolvedPlaces: places,
+        totalExtractedPlaces: places.length,
+        status: "completed",
+    };
+    if (processingTimeSeconds != null) {
+        updateFields.processingTimeSeconds = processingTimeSeconds;
+    }
+
+    await ImportedVideo.findByIdAndUpdate(importedVideo._id, updateFields);
+}
 
 /**
  * Helper to enrich candidate places with discovery results if needed.
@@ -243,30 +329,42 @@ export async function extractVideoPlaces(req, res) {
         let phaseStart = Date.now();
         const aiResult = await extractPlacesFromVideoAI(videoUrl.trim(), (statusMessage) => {
             sendEvent("progress", { message: statusMessage });
-        }, { keepLocalFile: true });
+        }, { keepLocalFile: true, importId: importedVideo?._id, userId });
         phaseTimes.aiExtraction = ((Date.now() - phaseStart) / 1000).toFixed(1);
 
         localVideoPath = aiResult.localVideoPath;
+        const localCarouselPaths = aiResult.localCarouselPaths || [];
+        const mediaType = aiResult.mediaType || "video";
+        const isCached = aiResult._cached === true;
 
-        sendEvent("progress", { message: `Extracted places from ${aiResult.locations.length} location(s). Looking up details...` });
+        let places;
 
-        // ── Step 3: Look up each place via Google Places API (per-city) ──
-        //    This is what the user cares about — do it IMMEDIATELY, don't wait for R2
-        phaseStart = Date.now();
-        const places = await lookupPlacesByLocations(
-            aiResult.locations,
-            (progressMsg) => {
-                sendEvent("progress", { message: progressMsg });
-            },
-            (batchPlaces, totalFound, totalExpected) => {
-                sendEvent("place_batch", {
-                    places: batchPlaces,
-                    totalFound,
-                    totalExpected,
-                });
-            }
-        );
-        phaseTimes.placesLookup = ((Date.now() - phaseStart) / 1000).toFixed(1);
+        if (isCached && aiResult._cachedResolvedPlaces?.length > 0) {
+            // ⚡ CACHE HIT: Use cached resolved places, skip Places API entirely
+            places = aiResult._cachedResolvedPlaces;
+            sendEvent("progress", { message: `⚡ Using cached results (${places.length} places)` });
+            sendEvent("place_batch", { places, totalFound: places.length, totalExpected: places.length });
+        } else {
+            // Normal flow: look up places via Google Places API
+            sendEvent("progress", { message: `Extracted places from ${aiResult.locations.length} location(s). Looking up details...` });
+
+            // ── Step 3: Look up each place via Google Places API (per-city) ──
+            phaseStart = Date.now();
+            places = await lookupPlacesByLocations(
+                aiResult.locations,
+                (progressMsg) => {
+                    sendEvent("progress", { message: progressMsg });
+                },
+                (batchPlaces, totalFound, totalExpected) => {
+                    sendEvent("place_batch", {
+                        places: batchPlaces,
+                        totalFound,
+                        totalExpected,
+                    });
+                }
+            );
+            phaseTimes.placesLookup = ((Date.now() - phaseStart) / 1000).toFixed(1);
+        }
 
         const elapsedSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
 
@@ -280,13 +378,14 @@ export async function extractVideoPlaces(req, res) {
             locations: aiResult.locations,
             totalPlaces: places.length,
             places,
+            mediaType,
             videoTranscript: aiResult.videoTranscript,
             aiUnderstanding: aiResult.aiUnderstanding,
             title: aiResult.title || "",
             caption: aiResult.caption || "",
             originalUrl: aiResult.normalizedUrl || videoUrl.trim(),
             thumbnailUrl: aiResult.thumbnailUrl || null,
-            cloudflareVideoUrl: null, // Will be updated in background
+            cloudflareVideoUrl: isCached ? (aiResult._cachedCloudflareVideoUrl || null) : null,
             processingTimeSeconds: parseFloat(elapsedSeconds),
         });
 
@@ -298,49 +397,36 @@ export async function extractVideoPlaces(req, res) {
         if (importedVideo) {
             (async () => {
                 try {
-                    const r2Start = Date.now();
-                    
-                    // Upload Video and Thumbnail to R2 concurrently for efficiency
-                    const [uploadedVideo, r2ThumbnailUrl] = await Promise.all([
-                        uploadImportedVideo(aiResult.localVideoPath, importedVideo._id.toString()),
-                        aiResult.thumbnailUrl ? uploadThumbnailFromUrl(aiResult.thumbnailUrl, importedVideo._id.toString()) : Promise.resolve(null)
-                    ]);
-                    
-                    const r2Time = ((Date.now() - r2Start) / 1000).toFixed(1);
-
-                    await ImportedVideo.findByIdAndUpdate(importedVideo._id, {
-                        platform: aiResult.platform || platform || "other",
-                        normalizedUrl: aiResult.normalizedUrl || videoUrl.trim(),
-                        sourceVideoId: aiResult.sourceVideoId || null,
-                        title: aiResult.title || "",
-                        caption: aiResult.caption || "",
-                        thumbnailUrl: r2ThumbnailUrl || aiResult.thumbnailUrl || null,
-                        cloudflareVideoUrl: uploadedVideo?.publicUrl || null,
-                        cloudflareAssetKey: uploadedVideo?.key || null,
-                        aiTranscript: aiResult.videoTranscript || "",
-                        aiUnderstanding: aiResult.aiUnderstanding || "",
-                        locations: aiResult.locations || [],
+                    await finalizeImportRecord({
+                        importedVideo,
+                        aiResult,
+                        places,
                         destination,
-                        resolvedPlaces: places,
-                        totalExtractedPlaces: places.length,
+                        mediaType,
+                        isCached,
+                        localVideoPath: aiResult.localVideoPath,
+                        localCarouselPaths,
+                        videoUrl: videoUrl.trim(),
+                        platform,
                         processingTimeSeconds: parseFloat(elapsedSeconds),
-                        status: "completed",
                     });
                 } catch (bgErr) {
                     console.error("⚠️ [VideoImport] Background update failed:", bgErr.message);
                     await ImportedVideo.findByIdAndUpdate(importedVideo._id, {
-                        status: "completed", // Still mark as completed since user got their spots
+                        status: "completed",
                         destination,
                         resolvedPlaces: places,
                         totalExtractedPlaces: places.length,
                         processingTimeSeconds: parseFloat(elapsedSeconds),
                     }).catch(() => {});
                 } finally {
-                    cleanupDownloadedVideo(localVideoPath);
+                    await cleanupDownloadedVideo(localVideoPath);
+                    await cleanupDownloadedFiles(localCarouselPaths);
                 }
             })();
         } else {
-            cleanupDownloadedVideo(localVideoPath);
+            await cleanupDownloadedVideo(localVideoPath);
+            await cleanupDownloadedFiles(localCarouselPaths);
         }
         return;
 
@@ -352,9 +438,188 @@ export async function extractVideoPlaces(req, res) {
                 failureReason: error.message,
             }).catch(() => { });
         }
+        // Log structured download error
+        await logDownloadError({
+            url: req.body?.videoUrl || "",
+            platform: req.body?.platform || "other",
+            errorMessage: error.message,
+            tool: "yt-dlp",
+            importId: importedVideo?._id || null,
+            userId: req.body?.userId || null,
+        });
         sendEvent("error", { message: "Failed to extract places from video.", details: error.message });
-        cleanupDownloadedVideo(localVideoPath);
+        await cleanupDownloadedVideo(localVideoPath);
         return res.end();
+    }
+}
+
+/**
+ * Fire-and-forget video place extraction + auto-save.
+ * Returns 202 immediately, processes + saves spots in the background.
+ * Used by share intent screens (iOS ShareExtension + Android ShareMenuScreen).
+ *
+ * POST /api/extract-and-save
+ * Body: { videoUrl, userId, platform, isPremium }
+ */
+export async function extractAndSaveVideoPlaces(req, res) {
+    try {
+        const { videoUrl, userId, platform, isPremium } = req.body;
+
+        if (!videoUrl || typeof videoUrl !== "string" || !videoUrl.startsWith("http")) {
+            return res.status(400).json({
+                success: false,
+                error: "Missing or invalid 'videoUrl'. Provide a valid URL.",
+            });
+        }
+
+        if (!userId) {
+            return res.status(400).json({
+                success: false,
+                error: "Missing 'userId'. User must be signed in.",
+            });
+        }
+
+        // ── Free tier limit: max 5 imports for non-premium users ──
+        const FREE_IMPORT_LIMIT = 5;
+        if (!isPremium) {
+            const importCount = await ImportedVideo.countDocuments({ userId });
+            if (importCount >= FREE_IMPORT_LIMIT) {
+                return res.status(403).json({
+                    success: false,
+                    code: "IMPORT_LIMIT_REACHED",
+                    error: "You've reached the free import limit (5 reels). Upgrade to Premium for unlimited imports!",
+                    currentCount: importCount,
+                    limit: FREE_IMPORT_LIMIT,
+                });
+            }
+        }
+
+        // Create ImportedVideo record immediately
+        const importedVideo = await ImportedVideo.create({
+            userId,
+            platform: platform || "other",
+            originalUrl: videoUrl.trim(),
+            normalizedUrl: videoUrl.trim(),
+            status: "processing",
+        });
+
+        // Respond immediately — client can close
+        res.status(202).json({
+            success: true,
+            importId: importedVideo._id,
+            message: "Processing started. Spots will be saved automatically.",
+        });
+
+        // ── BACKGROUND: Extract + Save (fire-and-forget) ──
+        (async () => {
+            let localVideoPath = null;
+            let localCarouselPaths = [];
+            try {
+                // Step 1: Extract place names from video via Gemini
+                const aiResult = await extractPlacesFromVideoAI(videoUrl.trim(), () => {}, {
+                    keepLocalFile: true,
+                    importId: importedVideo._id,
+                    userId,
+                });
+                localVideoPath = aiResult.localVideoPath;
+                localCarouselPaths = aiResult.localCarouselPaths || [];
+                const mediaType = aiResult.mediaType || "video";
+                const isCached = aiResult._cached === true;
+
+                // Step 2: Look up each place via Google Places API (or use cache)
+                let places;
+                if (isCached && aiResult._cachedResolvedPlaces?.length > 0) {
+                    places = aiResult._cachedResolvedPlaces;
+                } else {
+                    places = await lookupPlacesByLocations(aiResult.locations, () => {}, () => {});
+                }
+
+                // Step 3: Save spots to DB
+                if (places.length > 0) {
+                    const rawSpots = places.map(place => ({
+                        userId,
+                        importId: importedVideo._id,
+                        country: normalizeCountryName(place.country),
+                        city: place.city || normalizeCountryName(place.country) || "Unknown",
+                        name: place.name,
+                        placeId: place.id || place.placeId || null,
+                        address: place.address || "",
+                        rating: place.rating || null,
+                        userRatingCount: place.userRatingCount !== undefined ? place.userRatingCount : null,
+                        photoUrl: place.photoUrl || null,
+                        coordinates: place.coordinates || { lat: null, lng: null },
+                        source: "share_extension",
+                    }));
+
+                    // Deduplicate
+                    const placeIds = rawSpots.filter(s => s.placeId).map(s => s.placeId);
+                    const existingSpots = await Spot.find({ userId, placeId: { $in: placeIds } }).lean();
+                    const existingPlaceIds = new Set(existingSpots.map(s => s.placeId));
+                    const spotsToSave = rawSpots.filter(s => !s.placeId || !existingPlaceIds.has(s.placeId));
+
+                    if (spotsToSave.length > 0) {
+                        const created = await Spot.insertMany(spotsToSave);
+                        await User.findByIdAndUpdate(userId, {
+                            $push: { spots: { $each: created.map(s => s._id) } },
+                        });
+
+                        // Background: upload photos to R2
+                        for (const spot of created) {
+                            try {
+                                if (!spot.placeId || !spot.photoUrl || spot.photoUrl.includes('r2.')) continue;
+                                const tempSpot = [{ placeId: spot.placeId, photoUrl: spot.photoUrl }];
+                                await uploadPlacePhotos(tempSpot);
+                                await Spot.findByIdAndUpdate(spot._id, { photoUrl: tempSpot[0].photoUrl });
+                            } catch (photoErr) {
+                                console.error(`[extractAndSave] Photo upload failed for ${spot.placeId}:`, photoErr.message);
+                            }
+                        }
+                    }
+                }
+
+                const destination = aiResult.locations.map(l => l.city).join(", ");
+
+                // Step 4: Upload to R2 + update ImportedVideo record
+                await finalizeImportRecord({
+                    importedVideo,
+                    aiResult,
+                    places,
+                    destination,
+                    mediaType,
+                    isCached,
+                    localVideoPath,
+                    localCarouselPaths,
+                    videoUrl: videoUrl.trim(),
+                    platform,
+                });
+
+            } catch (bgErr) {
+                console.error(`❌ [extractAndSave] Background failed for import ${importedVideo._id}:`, bgErr.message);
+                await ImportedVideo.findByIdAndUpdate(importedVideo._id, {
+                    status: "failed",
+                    failureReason: bgErr.message,
+                }).catch(() => {});
+                // Log structured download error
+                await logDownloadError({
+                    url: videoUrl,
+                    platform: platform || "other",
+                    errorMessage: bgErr.message,
+                    tool: "yt-dlp",
+                    importId: importedVideo._id,
+                    userId,
+                });
+            } finally {
+                await cleanupDownloadedVideo(localVideoPath);
+                await cleanupDownloadedFiles(localCarouselPaths);
+            }
+        })();
+
+    } catch (error) {
+        console.error("❌ extractAndSave request failed:", error.message);
+        return res.status(500).json({
+            success: false,
+            error: "Failed to start processing. Please try again.",
+        });
     }
 }
 

@@ -13,6 +13,11 @@ const ImportedVideoSchema = new mongoose.Schema(
             enum: ["instagram", "tiktok", "youtube", "other"],
             default: "other",
         },
+        mediaType: {
+            type: String,
+            enum: ["video", "carousel"],
+            default: "video",
+        },
         status: {
             type: String,
             enum: ["processing", "completed", "failed"],
@@ -102,6 +107,7 @@ const ImportedVideoSchema = new mongoose.Schema(
 
 ImportedVideoSchema.index({ userId: 1, createdAt: -1 });
 ImportedVideoSchema.index({ userId: 1, normalizedUrl: 1 });
+ImportedVideoSchema.index({ sourceVideoId: 1, status: 1 }, { sparse: true });
 
 const ImportedVideo = mongoose.model("ImportedVideo", ImportedVideoSchema);
 
